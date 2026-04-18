@@ -1,0 +1,22 @@
+{% extends "captive/_base_user.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Admin sign in" %}{% endblock %}
+
+{% block content %}
+<h2>{% trans "Admin sign in" %}</h2>
+<p class="sub">{% trans "privacyIDEA admin credentials required. 2FA (TOTP) mandatory." %}</p>
+<form method="post">
+    {% csrf_token %}
+    <div class="field">
+        <label for="username">{% trans "Admin username" %}</label>
+        <input type="text" id="username" name="username" autofocus autocomplete="username" required>
+    </div>
+    <div class="field">
+        <label for="password">{% trans "Password" %}</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required>
+    </div>
+    <button type="submit" class="btn btn-primary btn-block">{% trans "Continue" %}</button>
+</form>
+<p class="sub" style="margin-top:16px;"><a href="{% url 'user_login' %}">{% trans "User self-enrollment" %} &rarr;</a></p>
+{% endblock %}

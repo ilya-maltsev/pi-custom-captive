@@ -1,0 +1,64 @@
+{% extends "captive/_base_admin.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Tokens" %} — {{ target_user }}{% endblock %}
+
+{% block content %}
+<h1>{% trans "Tokens of" %} <code>{{ target_user }}</code> <span class="sub" style="font-weight:normal;">@ {{ realm }}</span></h1>
+
+<div style="margin-bottom:12px;">
+    <a href="{% url 'admin_home' %}" class="btn btn-sm">&larr; {% trans "Back" %}</a>
+</div>
+
+<div class="admin-panel">
+    <h3>{% trans "TOTP tokens" %}</h3>
+    {% if tokens %}
+    <table class="tbl">
+        <thead>
+        <tr>
+            <th>{% trans "Serial" %}</th>
+            <th>{% trans "Description" %}</th>
+            <th>{% trans "Active" %}</th>
+            <th>{% trans "Failcount" %}</th>
+            <th style="width:240px;">{% trans "Actions" %}</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for t in tokens %}
+        <tr>
+            <td><code>{{ t.serial }}</code></td>
+            <td>{{ t.description|default:"—" }}</td>
+            <td>{% if t.active %}<span style="color:var(--fi-success);">&#10003;</span>{% else %}<span style="color:var(--fi-error);">&#10007;</span>{% endif %}</td>
+            <td>{{ t.failcount|default:0 }}</td>
+            <td>
+                {% if t.active %}
+                <form method="post" class="inline-form"
+                      action="{% url 'admin_token_toggle' target_user t.serial %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="disable">
+                    <button class="btn btn-sm btn-warning">{% trans "Disable" %}</button>
+                </form>
+                {% else %}
+                <form method="post" class="inline-form"
+                      action="{% url 'admin_token_toggle' target_user t.serial %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="enable">
+                    <button class="btn btn-sm btn-success">{% trans "Enable" %}</button>
+                </form>
+                {% endif %}
+                <form method="post" class="inline-form"
+                      action="{% url 'admin_token_delete' target_user t.serial %}"
+                      onsubmit="return confirm('{% trans "Delete and unassign this token?" %}');">
+                    {% csrf_token %}
+                    <button class="btn btn-sm btn-danger">{% trans "Delete" %}</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="sub" style="text-align:left;">{% trans "No TOTP tokens for this user." %}</p>
+    {% endif %}
+</div>
+{% endblock %}

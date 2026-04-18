@@ -1,0 +1,21 @@
+{% extends "captive/_base_user.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Sign in" %} — {% trans "Self-Enrollment" %}{% endblock %}
+
+{% block content %}
+<h2>{% trans "Self-Enrollment" %}</h2>
+<p class="sub">{% blocktrans with realm=pi_realm %}Sign in with your account ({{ realm }}) to set up 2FA.{% endblocktrans %}</p>
+<form method="post">
+    {% csrf_token %}
+    <div class="field">
+        <label for="username">{% trans "Username" %}</label>
+        <input type="text" id="username" name="username" autofocus autocomplete="username" required>
+    </div>
+    <div class="field">
+        <label for="password">{% trans "Password" %}</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required>
+    </div>
+    <button type="submit" class="btn btn-primary btn-block">{% trans "Continue" %}</button>
+</form>
+{% endblock %}

@@ -1,0 +1,274 @@
+"""Narrow privacyIDEA REST API client.
+
+Only the endpoints required by the captive portal are exposed:
+
+  /auth                              - admin/service login (JWT)
+  /token (GET)                       - list tokens for a user
+  /token/init (POST)                 - enroll TOTP for a user
+  /token/<serial> (DELETE)           - delete + unassign a token
+  /token/enable / /token/disable     - toggle token active state
+  /validate/check (POST)             - verify OTP (no auth required)
+"""
+import base64
+import json
+import logging
+from datetime import datetime, timezone, timedelta
+from urllib.parse import quote
+
+import requests
+from django.conf import settings
+
+log = logging.getLogger('captive')
+
+
+_SECRET_SUBSTRINGS = (
+    'password', 'pass',
+    'authorization', 'cookie',
+    'token', 'secret', 'otp', 'otpkey',
+    'pi-authorization',
+)
+
+
+def _is_secret_key(name):
+    n = str(name).lower()
+    return any(s in n for s in _SECRET_SUBSTRINGS)
+
+
+def _redact_mapping(items):
+    if items is None:
+        return {}
+    try:
+        iterator = items.items() if hasattr(items, 'items') else items
+    except Exception:
+        return {}
+    return {k: ('***' if _is_secret_key(k) else v) for k, v in iterator}
+
+
+def _redact_json_body(text):
+    if not text:
+        return text
+    try:
+        obj = json.loads(text)
+    except Exception:
+        return text
+
+    def walk(node):
+        if isinstance(node, dict):
+            return {k: ('***' if _is_secret_key(k) else walk(v))
+                    for k, v in node.items()}
+        if isinstance(node, list):
+            return [walk(x) for x in node]
+        return node
+
+    return json.dumps(walk(obj), separators=(',', ':'))
+
+
+class PIClientError(Exception):
+    pass
+
+
+class PIClient:
+    """Stateless helper that authenticates with PI and calls its REST API."""
+
+    def __init__(self, base_url=None, verify_ssl=None):
+        self.base_url = (base_url or settings.PI_API_URL).rstrip('/')
+        self.verify_ssl = verify_ssl if verify_ssl is not None else settings.PI_VERIFY_SSL
+        self._token = None
+        self._token_exp = None
+        self._username = None
+        self._password = None
+
+    # --- HTTP core -----------------------------------------------------------
+
+    def _request(self, method, url, **kwargs):
+        headers = kwargs.get('headers', {}) or {}
+        params = kwargs.get('params')
+        data = kwargs.get('data')
+        log.debug('PI HTTP >>> %s %s headers=%s params=%s body=%s',
+                  method, url,
+                  _redact_mapping(headers),
+                  _redact_mapping(params) if params else None,
+                  _redact_mapping(data) if data else None)
+        resp = requests.request(method, url, **kwargs)
+        log.debug('PI HTTP <<< %s %s body=%s',
+                  resp.status_code, resp.reason,
+                  _redact_json_body(resp.text))
+        return resp
+
+    def _headers(self):
+        if not self._token:
+            raise PIClientError('Not authenticated.')
+        return {'PI-Authorization': self._token}
+
+    # --- authentication ------------------------------------------------------
+
+    def authenticate(self, username, password):
+        """Obtain a JWT from PI using password credentials."""
+        resp = self._request(
+            'POST',
+            f'{self.base_url}/auth',
+            data={'username': username, 'password': password},
+            verify=self.verify_ssl, timeout=15,
+        )
+        try:
+            data = resp.json()
+        except ValueError:
+            raise PIClientError(f'Invalid response from PI (HTTP {resp.status_code})')
+        result = data.get('result', {})
+        if not result.get('status') or not result.get('value'):
+            msg = result.get('error', {}).get('message', 'Authentication failed')
+            log.warning('PI auth failed user=%s: %s', username, msg)
+            raise PIClientError(msg)
+        token = result['value']['token']
+        self._token = token
+        self._username = username
+        self._password = password
+        payload_b64 = token.split('.')[1]
+        payload_b64 += '=' * (-len(payload_b64) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        self._token_exp = datetime.fromtimestamp(payload['exp'], tz=timezone.utc)
+        log.info('PI auth success user=%s', username)
+        return token
+
+    def _ensure_auth(self):
+        if not self._token:
+            raise PIClientError('Not authenticated.')
+        if datetime.now(timezone.utc) >= self._token_exp - timedelta(minutes=5):
+            if self._username and self._password:
+                self.authenticate(self._username, self._password)
+            else:
+                raise PIClientError('JWT expired and no credentials stored for refresh.')
+
+    def set_token(self, token, username=None):
+        """Reuse a JWT obtained elsewhere (e.g. stored in a session)."""
+        self._token = token
+        self._username = username
+        self._token_exp = datetime.now(timezone.utc) + timedelta(minutes=55)
+
+    # --- tokens --------------------------------------------------------------
+
+    def list_tokens(self, username, realm=None, type_=None, active=None):
+        """Return a list of tokens for a user. Filters: type_='totp', active=True."""
+        self._ensure_auth()
+        params = {'user': username}
+        if realm:
+            params['realm'] = realm
+        if type_:
+            params['type'] = type_
+        if active is not None:
+            params['active'] = 'true' if active else 'false'
+        resp = self._request(
+            'GET',
+            f'{self.base_url}/token/',
+            params=params,
+            headers=self._headers(),
+            verify=self.verify_ssl, timeout=15,
+        )
+        data = resp.json()
+        if not data.get('result', {}).get('status'):
+            raise PIClientError('Failed to list tokens')
+        return data['result']['value'].get('tokens', [])
+
+    def has_active_totp(self, username, realm=None):
+        """True if the user has at least one active TOTP token."""
+        tokens = self.list_tokens(username, realm=realm, type_='totp', active=True)
+        return len(tokens) > 0
+
+    def init_totp(self, username, realm):
+        """Enroll a new TOTP token for a user.
+
+        Returns a dict with:
+          serial   - token serial
+          otpauth  - otpauth:// URI (for QR encoding)
+        """
+        self._ensure_auth()
+        data = {
+            'type': 'totp',
+            'user': username,
+            'realm': realm,
+            'genkey': '1',
+            'hashlib': 'sha1',
+            'otplen': '6',
+            'timeStep': '30',
+            'description': 'self-enrolled via captive portal',
+        }
+        resp = self._request(
+            'POST',
+            f'{self.base_url}/token/init',
+            data=data,
+            headers=self._headers(),
+            verify=self.verify_ssl, timeout=15,
+        )
+        body = resp.json()
+        result = body.get('result', {})
+        if not result.get('status'):
+            msg = result.get('error', {}).get('message', 'Failed to enroll token')
+            log.warning('PI /token/init user=%s@%s failed: %s', username, realm, msg)
+            raise PIClientError(msg)
+        detail = body.get('detail', {}) or {}
+        googleurl = detail.get('googleurl', {}) or {}
+        log.info('PI /token/init ok user=%s@%s serial=%s',
+                 username, realm, detail.get('serial', '?'))
+        return {
+            'serial': detail.get('serial', ''),
+            'otpauth': googleurl.get('value', ''),
+        }
+
+    def delete_token(self, serial):
+        """Delete a token (PI DELETE also unassigns it from the user)."""
+        self._ensure_auth()
+        resp = self._request(
+            'DELETE',
+            f'{self.base_url}/token/{quote(serial)}',
+            headers=self._headers(),
+            verify=self.verify_ssl, timeout=15,
+        )
+        data = resp.json()
+        result = data.get('result', {})
+        if not result.get('status'):
+            msg = result.get('error', {}).get('message', 'Failed to delete token')
+            raise PIClientError(msg)
+        log.info('PI token deleted serial=%s', serial)
+        return result.get('value', 0)
+
+    def set_token_active(self, serial, enabled):
+        """Enable or disable a token."""
+        self._ensure_auth()
+        action = 'enable' if enabled else 'disable'
+        resp = self._request(
+            'POST',
+            f'{self.base_url}/token/{action}',
+            data={'serial': serial},
+            headers=self._headers(),
+            verify=self.verify_ssl, timeout=15,
+        )
+        data = resp.json()
+        result = data.get('result', {})
+        if not result.get('status'):
+            msg = result.get('error', {}).get('message', f'Failed to {action} token')
+            raise PIClientError(msg)
+        log.info('PI token %sd serial=%s', action, serial)
+        return result.get('value', 0)
+
+    # --- validation (no JWT required) ----------------------------------------
+
+    def validate_check(self, username, password, realm=None):
+        """POST /validate/check. Returns True on success."""
+        data = {'user': username, 'pass': password}
+        if realm:
+            data['realm'] = realm
+        resp = self._request(
+            'POST',
+            f'{self.base_url}/validate/check',
+            data=data,
+            verify=self.verify_ssl, timeout=15,
+        )
+        try:
+            body = resp.json()
+        except ValueError:
+            raise PIClientError(f'Invalid response from PI (HTTP {resp.status_code})')
+        result = body.get('result', {})
+        if not result.get('status'):
+            msg = result.get('error', {}).get('message', 'validate/check failed')
+            raise PIClientError(msg)
+        return bool(result.get('value'))

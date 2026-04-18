@@ -1,0 +1,13 @@
+{% extends "captive/_base_user.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Already enrolled" %}{% endblock %}
+
+{% block content %}
+<h2>{% trans "Already enrolled" %}</h2>
+<p class="sub">
+    {% blocktrans %}Your account already has a TOTP token.
+    If you lost your authenticator app, contact an administrator to reset it.{% endblocktrans %}
+</p>
+<a href="{% url 'user_login' %}" class="btn btn-block">{% trans "Back" %}</a>
+{% endblock %}

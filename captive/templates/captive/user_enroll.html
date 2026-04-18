@@ -1,0 +1,35 @@
+{% extends "captive/_base_user.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Scan QR and verify" %}{% endblock %}
+
+{% block content %}
+<h2>{% trans "Scan and verify" %}</h2>
+<p class="sub">
+    {% blocktrans %}Scan this QR code with Google Authenticator (or any TOTP app),
+    then enter the 6-digit code to confirm.{% endblocktrans %}
+</p>
+<div class="qr-box">
+    {% if qr_data_uri %}
+        <img src="{{ qr_data_uri }}" alt="QR">
+    {% else %}
+        <p class="sub">{% trans "QR unavailable. Enter the URI manually below." %}</p>
+    {% endif %}
+    <div class="serial">{{ serial }}</div>
+</div>
+{% if otpauth %}
+<details style="margin:8px 0 16px; font-size:12px;">
+    <summary style="cursor:pointer; color:var(--fi-text-muted)">{% trans "Show setup URI" %}</summary>
+    <code style="display:block; padding:8px; background:#f9fafb; border:1px solid var(--fi-border); border-radius:4px; word-break:break-all; margin-top:4px">{{ otpauth }}</code>
+</details>
+{% endif %}
+<form method="post">
+    {% csrf_token %}
+    <div class="field">
+        <label for="otp">{% trans "6-digit code" %}</label>
+        <input type="text" id="otp" name="otp" inputmode="numeric" pattern="[0-9]{6}"
+               maxlength="6" autocomplete="one-time-code" autofocus required>
+    </div>
+    <button type="submit" class="btn btn-primary btn-block">{% trans "Verify and finish" %}</button>
+</form>
+{% endblock %}

@@ -1,0 +1,46 @@
+services:
+  app:
+    build:
+      context: .
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      PI_API_URL: ${PI_API_URL:-https://host.docker.internal:8443}
+      PI_VERIFY_SSL: ${PI_VERIFY_SSL:-false}
+      PI_REALM: ${PI_REALM:-defrealm}
+      PI_SERVICE_USER: ${PI_SERVICE_USER:-}
+      PI_SERVICE_PASSWORD: ${PI_SERVICE_PASSWORD:-}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-changeme}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-*}
+      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-https://localhost:6443}
+      DJANGO_LOG_LEVEL: ${DJANGO_LOG_LEVEL:-INFO}
+      SYSLOG_ENABLED: ${SYSLOG_ENABLED:-false}
+      SYSLOG_HOST: ${SYSLOG_HOST:-}
+      SYSLOG_PORT: ${SYSLOG_PORT:-514}
+      SYSLOG_PROTO: ${SYSLOG_PROTO:-udp}
+      SYSLOG_FACILITY: ${SYSLOG_FACILITY:-local2}
+      SYSLOG_TAG: ${SYSLOG_TAG:-pi-custom-captive}
+      SYSLOG_LEVEL: ${SYSLOG_LEVEL:-INFO}
+    volumes:
+      - staticfiles:/app/staticfiles
+    restart: always
+
+  reverse_proxy:
+    image: nginx:1.27-alpine
+    environment:
+      SERVERNAME: ${SERVERNAME:-localhost}
+      APP_PORT: 8000
+    ports:
+      - "${PROXY_PORT:-6443}:443"
+    volumes:
+      - ./templates/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./templates/pi.pem:/etc/nginx/ssl/pi.pem:ro
+      - ./templates/pi.key:/etc/nginx/ssl/pi.key:ro
+      - staticfiles:/app/staticfiles:ro
+    depends_on:
+      - app
+    restart: always
+
+volumes:
+  staticfiles: {}

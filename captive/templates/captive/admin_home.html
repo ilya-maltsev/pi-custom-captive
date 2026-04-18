@@ -1,0 +1,19 @@
+{% extends "captive/_base_admin.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Manage user tokens" %}{% endblock %}
+
+{% block content %}
+<h1>{% trans "Manage user tokens" %}</h1>
+<div class="admin-panel">
+    <h3>{% trans "Find user" %}</h3>
+    <form method="get" action="{% url 'admin_home' %}" style="display:flex; gap:8px;">
+        <input type="text" name="user" placeholder="{% trans 'username' %}" required
+               style="flex:1; padding:8px 10px; border:1px solid var(--fi-border); border-radius:4px;">
+        <button type="submit" class="btn btn-primary">{% trans "Open" %}</button>
+    </form>
+    <p class="sub" style="text-align:left; margin-top:12px;">
+        {% blocktrans with r=pi_realm %}All lookups target realm <b>{{ r }}</b>.{% endblocktrans %}
+    </p>
+</div>
+{% endblock %}

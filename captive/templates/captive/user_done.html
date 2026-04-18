@@ -1,0 +1,15 @@
+{% extends "captive/_base_user.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Enrollment complete" %}{% endblock %}
+
+{% block content %}
+<h2>{% trans "Enrollment complete" %}</h2>
+<p class="sub">
+    {% blocktrans with u=username %}Your TOTP token is active for <b>{{ u }}</b>.
+    You can now close this page.{% endblocktrans %}
+</p>
+<p class="sub" style="margin-top:16px;">
+    {% trans "You will not be able to return to this page until an administrator resets your token." %}
+</p>
+{% endblock %}

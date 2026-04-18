@@ -1,0 +1,5 @@
+django>=4.2,<6
+whitenoise
+requests
+gunicorn
+qrcode[pil]
