@@ -83,8 +83,26 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 PI_API_URL = os.environ.get('PI_API_URL', 'https://localhost:8443')
 PI_VERIFY_SSL = os.environ.get('PI_VERIFY_SSL', 'false').lower() in ('true', '1', 'yes')
 PI_REALM = os.environ.get('PI_REALM', 'defrealm')
-PI_SERVICE_USER = os.environ.get('PI_SERVICE_USER', '')
-PI_SERVICE_PASSWORD = os.environ.get('PI_SERVICE_PASSWORD', '')
+
+# --- otpauth:// customisation -------------------------------------------------
+# These control what the user's authenticator app (Google Authenticator,
+# Authy, 2FAS, …) shows as the account label. The app renders "ISSUER: LABEL".
+# ISSUER replaces the PI default "privacyIDEA" (e.g. "VPN-GATE1").
+# LABEL_ATTR names a PI user attribute whose value becomes the per-account
+# label — typically the username, but can be any attribute PI returns from
+# /user/ for the logged-in user (e.g. "email", "givenname", "mobile").
+OTPAUTH_ISSUER = os.environ.get('OTPAUTH_ISSUER', 'privacyIDEA')
+OTPAUTH_LABEL_ATTR = os.environ.get('OTPAUTH_LABEL_ATTR', 'username')
+
+# --- Optional mTLS header-auth ------------------------------------------------
+# When enabled, the USER flow skips the password step and trusts identity
+# carried in a header set by an upstream nginx that has already verified the
+# client's TLS certificate. Header names below are in Django META form
+# (HTTP_ prefix, dashes -> underscores, uppercased).
+MTLS_ENABLED = os.environ.get('MTLS_ENABLED', 'false').lower() in ('true', '1', 'yes')
+MTLS_USER_HEADER = os.environ.get('MTLS_USER_HEADER', 'HTTP_X_SSL_USER')
+MTLS_VERIFY_HEADER = os.environ.get('MTLS_VERIFY_HEADER', 'HTTP_X_SSL_VERIFY')
+MTLS_REQUIRED_VERIFY_VALUE = os.environ.get('MTLS_REQUIRED_VERIFY_VALUE', 'SUCCESS')
 
 # --- Logging -----------------------------------------------------------------
 SYSLOG_ENABLED = os.environ.get('SYSLOG_ENABLED', 'false').lower() in ('true', '1', 'yes')

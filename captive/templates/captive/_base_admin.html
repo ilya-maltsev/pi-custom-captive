@@ -15,6 +15,13 @@
         <div class="spacer"></div>
         {% if admin_authenticated %}
             <span class="meta">{{ admin_username }}</span>
+            {% if admin_2fa_ok %}
+                <span class="badge ok" title="{% trans 'Management unlocked via TOTP' %}">🔓 {% trans "mgmt" %}</span>
+            {% elif admin_has_totp %}
+                <a href="{% url 'admin_otp' %}" class="btn btn-sm btn-warning" title="{% trans 'Unlock with TOTP to enable management' %}">🔒 {% trans "Unlock" %}</a>
+            {% else %}
+                <span class="badge" title="{% trans 'Read-only: you have no TOTP enrolled in privacyIDEA' %}">👁 {% trans "read-only" %}</span>
+            {% endif %}
             <a href="{% url 'admin_logout' %}" class="btn btn-sm">{% trans "Logout" %}</a>
         {% endif %}
         <form action="{% url 'set_language' %}" method="post" style="display:inline">

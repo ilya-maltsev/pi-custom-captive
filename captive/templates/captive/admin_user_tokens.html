@@ -31,27 +31,37 @@
             <td>{% if t.active %}<span style="color:var(--fi-success);">&#10003;</span>{% else %}<span style="color:var(--fi-error);">&#10007;</span>{% endif %}</td>
             <td>{{ t.failcount|default:0 }}</td>
             <td>
-                {% if t.active %}
-                <form method="post" class="inline-form"
-                      action="{% url 'admin_token_toggle' target_user t.serial %}">
-                    {% csrf_token %}
-                    <input type="hidden" name="action" value="disable">
-                    <button class="btn btn-sm btn-warning">{% trans "Disable" %}</button>
-                </form>
+                {% if admin_2fa_ok %}
+                    {% if t.active %}
+                    <form method="post" class="inline-form"
+                          action="{% url 'admin_token_toggle' target_user t.serial %}">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="disable">
+                        <button class="btn btn-sm btn-warning">{% trans "Disable" %}</button>
+                    </form>
+                    {% else %}
+                    <form method="post" class="inline-form"
+                          action="{% url 'admin_token_toggle' target_user t.serial %}">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="enable">
+                        <button class="btn btn-sm btn-success">{% trans "Enable" %}</button>
+                    </form>
+                    {% endif %}
+                    <form method="post" class="inline-form"
+                          action="{% url 'admin_token_delete' target_user t.serial %}"
+                          onsubmit="return confirm('{% trans "Delete and unassign this token?" %}');">
+                        {% csrf_token %}
+                        <button class="btn btn-sm btn-danger">{% trans "Delete" %}</button>
+                    </form>
                 {% else %}
-                <form method="post" class="inline-form"
-                      action="{% url 'admin_token_toggle' target_user t.serial %}">
-                    {% csrf_token %}
-                    <input type="hidden" name="action" value="enable">
-                    <button class="btn btn-sm btn-success">{% trans "Enable" %}</button>
-                </form>
+                    <span class="sub" title="{% trans 'Unlock management with TOTP to enable these actions' %}">
+                        {% if admin_has_totp %}
+                            <a href="{% url 'admin_otp' %}">🔒 {% trans "unlock to manage" %}</a>
+                        {% else %}
+                            {% trans "read-only — admin has no TOTP" %}
+                        {% endif %}
+                    </span>
                 {% endif %}
-                <form method="post" class="inline-form"
-                      action="{% url 'admin_token_delete' target_user t.serial %}"
-                      onsubmit="return confirm('{% trans "Delete and unassign this token?" %}');">
-                    {% csrf_token %}
-                    <button class="btn btn-sm btn-danger">{% trans "Delete" %}</button>
-                </form>
             </td>
         </tr>
         {% endfor %}

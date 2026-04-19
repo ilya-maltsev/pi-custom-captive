@@ -1,0 +1,21 @@
+{% extends "captive/_base_user.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Client certificate required" %}{% endblock %}
+
+{% block content %}
+<h2>{% trans "Client certificate required" %}</h2>
+<p class="sub">
+    {% blocktrans %}This portal is configured to authenticate users with a
+    TLS client certificate installed on your device. The reverse proxy could
+    not verify a valid certificate on your request.{% endblocktrans %}
+</p>
+{% if reason %}
+<div class="msg msg-warning" style="margin-top:12px;">
+    <code style="font-size:12px;">{{ reason }}</code>
+</div>
+{% endif %}
+<p class="sub" style="margin-top:16px;">
+    {% trans "Check that your certificate is installed, not expired, not revoked, and matches the expected CA. Then reload this page." %}
+</p>
+{% endblock %}

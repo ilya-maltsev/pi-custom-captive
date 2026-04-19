@@ -102,12 +102,15 @@ class PIClient:
 
     # --- authentication ------------------------------------------------------
 
-    def authenticate(self, username, password):
+    def authenticate(self, username, password, realm=None):
         """Obtain a JWT from PI using password credentials."""
+        data = {'username': username, 'password': password}
+        if realm:
+            data['realm'] = realm
         resp = self._request(
             'POST',
             f'{self.base_url}/auth',
-            data={'username': username, 'password': password},
+            data=data,
             verify=self.verify_ssl, timeout=15,
         )
         try:
@@ -147,10 +150,16 @@ class PIClient:
 
     # --- tokens --------------------------------------------------------------
 
-    def list_tokens(self, username, realm=None, type_=None, active=None):
-        """Return a list of tokens for a user. Filters: type_='totp', active=True."""
+    def list_tokens(self, username=None, realm=None, type_=None, active=None):
+        """Return tokens visible to the current JWT.
+
+        If ``username`` is None, PI auto-scopes to the JWT caller (the user
+        flow uses this to list their own tokens). Pass ``username`` only when
+        the caller is an admin looking up someone else."""
         self._ensure_auth()
-        params = {'user': username}
+        params = {}
+        if username:
+            params['user'] = username
         if realm:
             params['realm'] = realm
         if type_:
@@ -169,13 +178,51 @@ class PIClient:
             raise PIClientError('Failed to list tokens')
         return data['result']['value'].get('tokens', [])
 
-    def has_active_totp(self, username, realm=None):
-        """True if the user has at least one active TOTP token."""
-        tokens = self.list_tokens(username, realm=realm, type_='totp', active=True)
+    def get_user_info(self, username=None, realm=None):
+        """Return the first matching user dict from PI's /user/ endpoint, or
+        None if PI responded with no matches / an error.
+
+        Works for a user JWT: the default PI user-scope policy lets a logged-in
+        user list their own profile (resolver attributes like ``email``,
+        ``givenname``, ``mobile``, plus any custom attributes). Works for an
+        admin JWT too — pass ``username`` + ``realm`` to target a given user.
+        """
+        self._ensure_auth()
+        params = {}
+        if username:
+            params['username'] = username
+        if realm:
+            params['realm'] = realm
+        resp = self._request(
+            'GET',
+            f'{self.base_url}/user/',
+            params=params,
+            headers=self._headers(),
+            verify=self.verify_ssl, timeout=15,
+        )
+        try:
+            data = resp.json()
+        except ValueError:
+            return None
+        result = data.get('result', {})
+        if not result.get('status'):
+            return None
+        users = result.get('value') or []
+        return users[0] if users else None
+
+    def has_active_totp(self, username=None, realm=None):
+        """True if at least one active TOTP token exists for the scope.
+
+        When ``username`` is None, checks the JWT caller's own tokens."""
+        tokens = self.list_tokens(username=username, realm=realm, type_='totp', active=True)
         return len(tokens) > 0
 
-    def init_totp(self, username, realm):
-        """Enroll a new TOTP token for a user.
+    def init_totp(self, username=None, realm=None):
+        """Enroll a new TOTP token.
+
+        When called with a user's JWT and no ``username``, PI enrols for the
+        JWT caller. When called with an admin JWT, pass ``username``+``realm``
+        to target a specific user.
 
         Returns a dict with:
           serial   - token serial
@@ -184,14 +231,16 @@ class PIClient:
         self._ensure_auth()
         data = {
             'type': 'totp',
-            'user': username,
-            'realm': realm,
             'genkey': '1',
-            'hashlib': 'sha1',
+            'hashlib': 'sha256',
             'otplen': '6',
             'timeStep': '30',
             'description': 'self-enrolled via captive portal',
         }
+        if username:
+            data['user'] = username
+        if realm:
+            data['realm'] = realm
         resp = self._request(
             'POST',
             f'{self.base_url}/token/init',

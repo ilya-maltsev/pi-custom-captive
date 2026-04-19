@@ -30,7 +30,9 @@ from django.urls import reverse
 from django.utils.translation import gettext as _
 from django.views.decorators.http import require_POST
 
-from .decorators import admin_required
+from .decorators import admin_required, admin_2fa_required
+from .mtls import mtls_extract
+from .otp_utils import customize_otpauth, extract_secret, pretty_secret
 from .pi_client import PIClient, PIClientError
 
 log = logging.getLogger('captive')
@@ -39,15 +41,6 @@ log = logging.getLogger('captive')
 def _client_ip(request):
     xff = request.META.get('HTTP_X_FORWARDED_FOR')
     return xff.split(',')[0].strip() if xff else request.META.get('REMOTE_ADDR', '?')
-
-
-def _service_client():
-    """PIClient authenticated with the service account from env."""
-    if not settings.PI_SERVICE_USER or not settings.PI_SERVICE_PASSWORD:
-        raise PIClientError('PI_SERVICE_USER / PI_SERVICE_PASSWORD not configured')
-    c = PIClient()
-    c.authenticate(settings.PI_SERVICE_USER, settings.PI_SERVICE_PASSWORD)
-    return c
 
 
 def _qr_data_uri(otpauth):
@@ -65,7 +58,27 @@ def _qr_data_uri(otpauth):
 # =============================================================================
 
 def user_login(request):
-    """Step 1: user authenticates with AD/LDAP password via /validate/check."""
+    """Step 1: user authenticates with their own credentials.
+
+    The portal no longer uses a service account. After ``/auth`` succeeds, the
+    resulting user JWT is stored in the session and every subsequent PI call
+    (lockout check, token init) runs on that JWT — PI auto-scopes to the
+    caller.
+    """
+    realm = settings.PI_REALM
+    ip = _client_ip(request)
+
+    if settings.MTLS_ENABLED:
+        # mTLS identification yields a username but not a PI JWT. Without a
+        # user JWT there is no way to list or enrol tokens as the user — and
+        # the previous "service-account proxy" pattern has been removed. Ask
+        # the user to fall back to the password form until a PI-impersonation
+        # path is added.
+        return render(request, 'captive/user_mtls_error.html', {
+            'reason': _('mTLS self-enrolment is not available in this build. '
+                        'Please use the password form.'),
+        }, status=501)
+
     if request.method == 'POST':
         username = request.POST.get('username', '').strip()
         password = request.POST.get('password', '')
@@ -73,31 +86,24 @@ def user_login(request):
             messages.error(request, _('Username and password are required.'))
             return render(request, 'captive/user_login.html')
 
-        realm = settings.PI_REALM
-        ip = _client_ip(request)
         log.info('user_login attempt user=%s@%s from=%s', username, realm, ip)
 
         pi = PIClient()
         try:
-            ok = pi.validate_check(username, password, realm=realm)
+            user_jwt = pi.authenticate(username, password, realm=realm)
         except PIClientError as e:
-            log.warning('user_login validate_check error user=%s@%s from=%s err=%s',
+            log.warning('user_login auth denied user=%s@%s from=%s: %s',
                         username, realm, ip, e)
             messages.error(request, _('Authentication failed.'))
             return render(request, 'captive/user_login.html')
 
-        if not ok:
-            log.warning('user_login denied user=%s@%s from=%s', username, realm, ip)
-            messages.error(request, _('Authentication failed.'))
-            return render(request, 'captive/user_login.html')
-
-        # Password OK. Check lockout via service account.
+        # Lockout check on the USER'S OWN JWT — PI auto-scopes to the caller.
         try:
-            svc = _service_client()
-            locked = svc.has_active_totp(username, realm=realm)
+            locked = pi.has_active_totp()
         except PIClientError as e:
-            log.error('user_login service lookup error user=%s@%s: %s', username, realm, e)
-            messages.error(request, _('Service unavailable. Contact administrator.'))
+            log.error('user_login token-list error user=%s@%s: %s',
+                      username, realm, e)
+            messages.error(request, _('Service unavailable. Please try again.'))
             return render(request, 'captive/user_login.html')
 
         if locked:
@@ -106,8 +112,28 @@ def user_login(request):
             request.session['locked_user'] = username
             return redirect('user_locked')
 
+        # Pick the label attribute (username by default) from PI's user record.
+        # Falls back to the login username if the attribute is missing or PI
+        # declines the self-lookup.
+        label = username
+        if settings.OTPAUTH_LABEL_ATTR and settings.OTPAUTH_LABEL_ATTR != 'username':
+            try:
+                info = pi.get_user_info(username=username, realm=realm) or {}
+                candidate = info.get(settings.OTPAUTH_LABEL_ATTR)
+                if candidate:
+                    label = str(candidate)
+                else:
+                    log.info('user_login attr=%s not found on user=%s@%s; falling back to username',
+                             settings.OTPAUTH_LABEL_ATTR, username, realm)
+            except PIClientError as e:
+                log.info('user_login user_info lookup failed user=%s@%s: %s',
+                         username, realm, e)
+
         request.session['enroll_user'] = username
-        log.info('user_login ok user=%s@%s from=%s -> enroll', username, realm, ip)
+        request.session['enroll_token'] = user_jwt
+        request.session['enroll_label'] = label
+        log.info('user_login ok user=%s@%s from=%s label=%s -> enroll',
+                 username, realm, ip, label)
         return redirect('user_enroll')
 
     return render(request, 'captive/user_login.html')
@@ -120,11 +146,15 @@ def user_locked(request):
 
 def user_enroll(request):
     username = request.session.get('enroll_user')
-    if not username:
+    user_jwt = request.session.get('enroll_token')
+    if not username or not user_jwt:
         return redirect('user_login')
 
     realm = settings.PI_REALM
     ip = _client_ip(request)
+
+    pi = PIClient()
+    pi.set_token(user_jwt, username=username)
 
     # GET: initialize token and show QR.
     if request.method == 'GET':
@@ -132,20 +162,31 @@ def user_enroll(request):
         enroll_data = request.session.get('enroll_data')
         if not enroll_data:
             try:
-                svc = _service_client()
                 # Double-check lockout (user could have been enrolled in another tab).
-                if svc.has_active_totp(username, realm=realm):
+                if pi.has_active_totp():
                     request.session.flush()
                     request.session['locked_user'] = username
                     return redirect('user_locked')
-                enroll_data = svc.init_totp(username, realm)
+                enroll_data = pi.init_totp()  # auto-scoped to JWT caller
             except PIClientError as e:
                 log.error('user_enroll init error user=%s@%s: %s', username, realm, e)
                 messages.error(request, _('Failed to create token. Contact administrator.'))
                 return redirect('user_login')
+
+            # Rewrite the URI so the authenticator app shows
+            # "<OTPAUTH_ISSUER>: <label>" instead of the PI default
+            # "privacyIDEA: <serial>".
+            label = request.session.get('enroll_label') or username
+            enroll_data['otpauth'] = customize_otpauth(
+                enroll_data.get('otpauth', ''),
+                settings.OTPAUTH_ISSUER,
+                label,
+            )
+            enroll_data['secret'] = extract_secret(enroll_data['otpauth'])
             request.session['enroll_data'] = enroll_data
-            log.info('user_enroll init user=%s@%s serial=%s from=%s',
-                     username, realm, enroll_data.get('serial', '?'), ip)
+            log.info('user_enroll init user=%s@%s serial=%s label=%s issuer=%s from=%s',
+                     username, realm, enroll_data.get('serial', '?'),
+                     label, settings.OTPAUTH_ISSUER, ip)
 
         qr = _qr_data_uri(enroll_data.get('otpauth', ''))
         return render(request, 'captive/user_enroll.html', {
@@ -153,17 +194,20 @@ def user_enroll(request):
             'serial': enroll_data.get('serial', ''),
             'otpauth': enroll_data.get('otpauth', ''),
             'qr_data_uri': qr,
+            'secret': enroll_data.get('secret', ''),
+            'secret_pretty': pretty_secret(enroll_data.get('secret', '')),
+            'otpauth_issuer': settings.OTPAUTH_ISSUER,
+            'otpauth_label': request.session.get('enroll_label') or username,
         })
 
-    # POST: verify OTP.
+    # POST: verify OTP. /validate/check does not require a JWT.
     otp = request.POST.get('otp', '').strip()
     if not otp.isdigit() or len(otp) != 6:
         messages.error(request, _('Enter the 6-digit code from your authenticator app.'))
         return redirect('user_enroll')
 
     try:
-        pi = PIClient()
-        ok = pi.validate_check(username, otp, realm=realm)
+        ok = PIClient().validate_check(username, otp, realm=realm)
     except PIClientError as e:
         log.warning('user_enroll verify error user=%s@%s: %s', username, realm, e)
         messages.error(request, _('Verification failed.'))
@@ -193,7 +237,8 @@ def user_done(request):
 # =============================================================================
 
 def admin_login(request):
-    """Step 1 of admin login: password via PI /auth."""
+    """Admin login — password only. Mutations require a subsequent TOTP
+    step-up via /admin/otp/. Any valid PI admin can see the read-only area."""
     if request.method == 'POST':
         username = request.POST.get('username', '').strip()
         password = request.POST.get('password', '')
@@ -210,23 +255,23 @@ def admin_login(request):
             messages.error(request, _('Authentication failed.'))
             return render(request, 'captive/admin_login.html')
 
-        # Enforce 2FA: the admin must have at least one active TOTP token.
+        # Does the admin have a TOTP token? Drives the "Unlock management" UX
+        # — if they don't, they stay read-only for the whole session.
+        # Query PI on the admin's own JWT: admin role can list tokens by user.
+        has_totp = False
         try:
-            svc = _service_client()
-            if not svc.has_active_totp(username):
-                log.warning('admin_login no TOTP user=%s from=%s', username, ip)
-                messages.error(request, _('Admin 2FA (TOTP) is required. Contact another administrator.'))
-                return render(request, 'captive/admin_login.html')
+            has_totp = pi.has_active_totp(username=username)
         except PIClientError as e:
-            log.error('admin_login service lookup error user=%s: %s', username, e)
-            messages.error(request, _('Service unavailable.'))
-            return render(request, 'captive/admin_login.html')
+            log.warning('admin_login token lookup failed user=%s: %s', username, e)
+            # Non-fatal: we just keep has_totp=False so the prompt doesn't show.
 
         request.session['admin_token'] = token
         request.session['admin_username'] = username
         request.session['admin_2fa_ok'] = False
-        log.info('admin_login password ok user=%s from=%s -> otp', username, ip)
-        return redirect('admin_otp')
+        request.session['admin_has_totp'] = has_totp
+        log.info('admin_login password ok user=%s from=%s has_totp=%s',
+                 username, ip, has_totp)
+        return redirect('admin_home')
 
     return render(request, 'captive/admin_login.html')
 
@@ -304,7 +349,7 @@ def admin_user_tokens(request, username):
     })
 
 
-@admin_required
+@admin_2fa_required
 @require_POST
 def admin_token_delete(request, username, serial):
     ip = _client_ip(request)
@@ -319,7 +364,7 @@ def admin_token_delete(request, username, serial):
     return redirect('admin_user_tokens', username=username)
 
 
-@admin_required
+@admin_2fa_required
 @require_POST
 def admin_token_toggle(request, username, serial):
     enable = request.POST.get('action') == 'enable'

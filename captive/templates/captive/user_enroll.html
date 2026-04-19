@@ -13,15 +13,34 @@
     {% if qr_data_uri %}
         <img src="{{ qr_data_uri }}" alt="QR">
     {% else %}
-        <p class="sub">{% trans "QR unavailable. Enter the URI manually below." %}</p>
+        <p class="sub">{% trans "QR unavailable. Use the manual secret below." %}</p>
     {% endif %}
-    <div class="serial">{{ serial }}</div>
+    <div class="serial">{% blocktrans with issuer=otpauth_issuer label=otpauth_label %}account: {{ issuer }}: {{ label }}{% endblocktrans %}</div>
 </div>
-{% if otpauth %}
-<details style="margin:8px 0 16px; font-size:12px;">
-    <summary style="cursor:pointer; color:var(--fi-text-muted)">{% trans "Show setup URI" %}</summary>
-    <code style="display:block; padding:8px; background:#f9fafb; border:1px solid var(--fi-border); border-radius:4px; word-break:break-all; margin-top:4px">{{ otpauth }}</code>
-</details>
+{% if secret %}
+<div class="field" style="margin:8px 0 18px;">
+    <label style="font-size:11px; color: var(--fi-text-muted);">{% trans "Or enter this secret manually in your authenticator app" %}</label>
+    <code id="totp-secret" style="display:block; padding:10px 12px; background:#f9fafb; border:1px solid var(--fi-border); border-radius:4px; font-size:14px; letter-spacing:0.08em; word-break:break-all; text-align:center; user-select:all; cursor:copy;"
+          title="{% trans 'Click to copy' %}">{{ secret_pretty|default:secret }}</code>
+    <div style="font-size:11px; color: var(--fi-text-muted); text-align:center; margin-top:4px;">
+        {% trans "algorithm SHA256 · 6 digits · 30-second period" %}
+    </div>
+</div>
+<script>
+(function () {
+  var el = document.getElementById('totp-secret');
+  if (!el) return;
+  el.addEventListener('click', function () {
+    var raw = '{{ secret|escapejs }}';
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(raw);
+    }
+    var prev = el.textContent;
+    el.textContent = '{% trans "copied" %} ✓';
+    setTimeout(function () { el.textContent = prev; }, 900);
+  });
+})();
+</script>
 {% endif %}
 <form method="post">
     {% csrf_token %}
