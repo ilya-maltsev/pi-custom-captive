@@ -6,7 +6,19 @@ Authenticator apps (Google Authenticator, Authy, 2FAS, …) render the URI as
 which is not useful for end users. We rewrite both to operator-friendly values
 driven by env vars + a per-user PI attribute.
 """
+import re
 from urllib.parse import urlparse, parse_qs, urlencode, quote
+
+
+def sanitize_for_serial(name):
+    """Return ``name`` stripped down to uppercase ASCII letters+digits.
+
+    Used to derive a readable, deterministic token serial from a username. The
+    portal enforces one TOTP per user (lockout), so a per-user-deterministic
+    serial is unique across enrolments for *that* user. Callers must ensure
+    their usernames don't collide once special characters are stripped — e.g.
+    ``a.b`` and ``ab`` both yield ``AB``."""
+    return re.sub(r'[^A-Za-z0-9]', '', str(name or '')).upper()
 
 
 def customize_otpauth(original_uri, issuer, label):

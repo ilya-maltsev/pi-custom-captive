@@ -217,12 +217,13 @@ class PIClient:
         tokens = self.list_tokens(username=username, realm=realm, type_='totp', active=True)
         return len(tokens) > 0
 
-    def init_totp(self, username=None, realm=None):
+    def init_totp(self, username=None, realm=None, serial=None):
         """Enroll a new TOTP token.
 
         When called with a user's JWT and no ``username``, PI enrols for the
         JWT caller. When called with an admin JWT, pass ``username``+``realm``
-        to target a specific user.
+        to target a specific user. Pass ``serial`` to override PI's
+        auto-generated serial (the caller is responsible for uniqueness).
 
         Returns a dict with:
           serial   - token serial
@@ -241,6 +242,8 @@ class PIClient:
             data['user'] = username
         if realm:
             data['realm'] = realm
+        if serial:
+            data['serial'] = serial
         resp = self._request(
             'POST',
             f'{self.base_url}/token/init',

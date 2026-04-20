@@ -20,6 +20,7 @@ Admin flow:
 import base64
 import io
 import logging
+import secrets
 
 import qrcode
 from django.conf import settings
@@ -32,7 +33,7 @@ from django.views.decorators.http import require_POST
 
 from .decorators import admin_required, admin_2fa_required
 from .mtls import mtls_extract
-from .otp_utils import customize_otpauth, extract_secret, pretty_secret
+from .otp_utils import customize_otpauth, extract_secret, pretty_secret, sanitize_for_serial
 from .pi_client import PIClient, PIClientError
 
 log = logging.getLogger('captive')
@@ -112,28 +113,46 @@ def user_login(request):
             request.session['locked_user'] = username
             return redirect('user_locked')
 
-        # Pick the label attribute (username by default) from PI's user record.
-        # Falls back to the login username if the attribute is missing or PI
-        # declines the self-lookup.
-        label = username
-        if settings.OTPAUTH_LABEL_ATTR and settings.OTPAUTH_LABEL_ATTR != 'username':
+        # Resolve label (for authenticator-app account line) and serial-suffix
+        # (for PI token serial middle segment) from PI user attributes. A
+        # single /user/ lookup covers both when either asks for a non-username
+        # attr; the default ('username') needs no extra call.
+        label_attr  = settings.OTPAUTH_LABEL_ATTR or 'username'
+        suffix_attr = settings.TOKEN_SERIAL_SUFFIX  # '' means "omit this segment"
+
+        need_info = (
+            (label_attr and label_attr != 'username')
+            or (suffix_attr and suffix_attr != 'username')
+        )
+        info = None
+        if need_info:
             try:
                 info = pi.get_user_info(username=username, realm=realm) or {}
-                candidate = info.get(settings.OTPAUTH_LABEL_ATTR)
-                if candidate:
-                    label = str(candidate)
-                else:
-                    log.info('user_login attr=%s not found on user=%s@%s; falling back to username',
-                             settings.OTPAUTH_LABEL_ATTR, username, realm)
             except PIClientError as e:
                 log.info('user_login user_info lookup failed user=%s@%s: %s',
                          username, realm, e)
 
+        def _resolve_attr(attr_name, fallback):
+            if not attr_name:
+                return ''
+            if attr_name == 'username':
+                return username
+            val = (info or {}).get(attr_name)
+            if not val:
+                log.info('user_login attr=%s not found on user=%s@%s; using fallback',
+                         attr_name, username, realm)
+                return fallback
+            return str(val)
+
+        label = _resolve_attr(label_attr, fallback=username)
+        serial_suffix_raw = _resolve_attr(suffix_attr, fallback=username)
+
         request.session['enroll_user'] = username
         request.session['enroll_token'] = user_jwt
         request.session['enroll_label'] = label
-        log.info('user_login ok user=%s@%s from=%s label=%s -> enroll',
-                 username, realm, ip, label)
+        request.session['enroll_serial_suffix'] = serial_suffix_raw
+        log.info('user_login ok user=%s@%s from=%s label=%s serial_suffix=%s -> enroll',
+                 username, realm, ip, label, serial_suffix_raw)
         return redirect('user_enroll')
 
     return render(request, 'captive/user_login.html')
@@ -167,7 +186,26 @@ def user_enroll(request):
                     request.session.flush()
                     request.session['locked_user'] = username
                     return redirect('user_locked')
-                enroll_data = pi.init_totp()  # auto-scoped to JWT caller
+                # Assemble serial as {PREFIX}-{SANITIZED(user.<SUFFIX_ATTR>)}-{SHORT_HASH}.
+                # - SUFFIX_ATTR value was resolved at login time and stashed
+                #   in the session (falls back to username if the configured
+                #   attr isn't present on the PI user record).
+                # - SHORT_HASH is 6 random hex chars to disambiguate edge
+                #   cases (sanitisation collisions, re-enrolments) and keep
+                #   audit-log history distinct.
+                # When TOKEN_SERIAL_PREFIX is empty the whole block is
+                # skipped and PI auto-generates its default TOTPXXXXXXXX.
+                serial_override = None
+                if settings.TOKEN_SERIAL_PREFIX:
+                    short_hash = secrets.token_hex(3).upper()
+                    suffix_raw = request.session.get('enroll_serial_suffix') or ''
+                    sanitized = sanitize_for_serial(suffix_raw)
+                    parts = [settings.TOKEN_SERIAL_PREFIX]
+                    if sanitized:
+                        parts.append(sanitized)
+                    parts.append(short_hash)
+                    serial_override = '-'.join(parts)
+                enroll_data = pi.init_totp(serial=serial_override)
             except PIClientError as e:
                 log.error('user_enroll init error user=%s@%s: %s', username, realm, e)
                 messages.error(request, _('Failed to create token. Contact administrator.'))

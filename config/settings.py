@@ -94,6 +94,25 @@ PI_REALM = os.environ.get('PI_REALM', 'defrealm')
 OTPAUTH_ISSUER = os.environ.get('OTPAUTH_ISSUER', 'privacyIDEA')
 OTPAUTH_LABEL_ATTR = os.environ.get('OTPAUTH_LABEL_ATTR', 'username')
 
+# Optional prefix for the PI token serial. When set, the portal assembles
+# {PREFIX}-{SANITIZED(user.<TOKEN_SERIAL_SUFFIX>)}-{SHORT_HASH}, where the
+# middle segment is the sanitized value of a PI user attribute named by
+# TOKEN_SERIAL_SUFFIX (uppercase [A-Z0-9] only), and SHORT_HASH is 6 random
+# hex chars. No trailing hyphen on the prefix — separators are inserted by
+# the code.
+# Empty TOKEN_SERIAL_PREFIX  = PI auto-generates (default TOTPXXXXXXXX).
+# Example: TOKEN_SERIAL_PREFIX=VPN-GATE1 + TOKEN_SERIAL_SUFFIX=username
+#          yields VPN-GATE1-LATRSTR-3A7F2B.
+TOKEN_SERIAL_PREFIX = os.environ.get('TOKEN_SERIAL_PREFIX', '')
+
+# Name of the PI user attribute whose value forms the middle segment of the
+# serial. Pick any attribute PI returns from /user/ for the logged-in user:
+# ``username`` (default, no extra PI call needed), ``email``, ``givenname``,
+# ``mobile``, or any custom_* attribute. Set to empty string to omit the
+# middle segment entirely (serial becomes {PREFIX}-{SHORT_HASH}). Only
+# effective when TOKEN_SERIAL_PREFIX is also set.
+TOKEN_SERIAL_SUFFIX = os.environ.get('TOKEN_SERIAL_SUFFIX', 'username')
+
 # --- Optional mTLS header-auth ------------------------------------------------
 # When enabled, the USER flow skips the password step and trusts identity
 # carried in a header set by an upstream nginx that has already verified the

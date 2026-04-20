@@ -150,15 +150,53 @@ Both options are open; `MTLS_*` env vars remain so the scaffold is ready when it
 
 See `environment/application-captive.env` for the full list. Key variables:
 
-| Var | Meaning |
-|-----|---------|
-| `PI_API_URL` | base URL of privacyIDEA REST API |
-| `PI_REALM` | the **only** realm the portal operates in |
-| `PROXY_PORT` | external HTTPS port (default 6443) |
-| `SYSLOG_*` | optional remote syslog forwarding (same scheme as pi-vpn-pooler) |
-| `MTLS_*` | mTLS header-auth (scaffold present; flow currently returns 501, see above) |
+| Var | Default | Meaning |
+|-----|---------|---------|
+| `PI_API_URL` | `https://host.docker.internal:8443` | base URL of privacyIDEA REST API |
+| `PI_REALM` | `defrealm` | the **only** realm the portal operates in |
+| `PROXY_PORT` | `6443` | external HTTPS port |
+| `OTPAUTH_ISSUER` | `privacyIDEA` | overrides the authenticator app's issuer line (e.g. `VPN-GATE1`) — see below |
+| `OTPAUTH_LABEL_ATTR` | `username` | PI user attribute shown as the account line in the authenticator app |
+| `TOKEN_SERIAL_PREFIX` | *(empty)* | when set, the portal builds custom PI serials — see below |
+| `TOKEN_SERIAL_SUFFIX` | `username` | PI user attribute supplying the middle segment of the custom serial |
+| `SYSLOG_*` |  | optional remote syslog forwarding (same scheme as pi-vpn-pooler) |
+| `MTLS_*` |  | mTLS header-auth (scaffold present; flow currently returns 501, see above) |
 
 There is intentionally **no** `PI_SERVICE_USER` / `PI_SERVICE_PASSWORD`. The portal never authenticates as anyone other than the actor currently using it.
+
+### Authenticator-app display and token serial
+
+Two independent customisations:
+
+**1. What the user sees in Google Authenticator / Authy / 2FAS.** The otpauth URI the portal encodes into the QR controls the account line. PI's default is `privacyIDEA: TOTP0002702F`, which is not useful to end users. The portal rewrites the URI on the fly:
+
+- `OTPAUTH_ISSUER` (default `privacyIDEA`) → shown as the bold row in the app list.
+- `OTPAUTH_LABEL_ATTR` (default `username`) → which PI user attribute becomes the account line under it. `username` requires no extra PI call; other values (`email`, `givenname`, `mobile`, `custom_*`) trigger a `GET /user/` on the user's own JWT — see the policy note below.
+
+Example: `OTPAUTH_ISSUER=VPN-GATE1 OTPAUTH_LABEL_ATTR=username` makes the authenticator app show **VPN-GATE1 · LatrStr**.
+
+The enrolment screen also exposes the raw base32 secret in a click-to-copy block (grouped `ABCD EFGH IJKL …`) for users whose devices can't scan the QR — no more hidden "Show setup URI" details.
+
+**2. What PI stores as the token serial.** By default PI assigns `TOTPXXXXXXXX` which is opaque to admins. When `TOKEN_SERIAL_PREFIX` is set, the portal passes a pre-built `serial=` to `/token/init` in the form:
+
+```
+{TOKEN_SERIAL_PREFIX}-{SANITIZED(user.<TOKEN_SERIAL_SUFFIX>)}-{SHORT_HASH}
+```
+
+- `SANITIZED(…)` keeps only `[A-Z0-9]` and uppercases.
+- `SHORT_HASH` is 6 random hex chars — prevents sanitisation collisions (e.g. `a.b` and `ab` both collapsing to `AB`) and keeps re-enrolments distinguishable in the PI audit log.
+- If `TOKEN_SERIAL_SUFFIX=""` the middle segment is omitted: `{PREFIX}-{HASH}`.
+
+Example with `TOKEN_SERIAL_PREFIX=VPN-GATE1 TOKEN_SERIAL_SUFFIX=username` and user `SrinPur`:
+
+```
+VPN-GATE1-SRINPUR-8240DC
+```
+
+Admins scanning PI can now group tokens by prefix (`VPN-GATE1-*`) and read off who owns each one at a glance.
+
+> [!NOTE]
+> **PI policy requirement for non-username attributes.** Looking up `email` / `givenname` / `mobile` via `/user/?username=<self>` requires the user-scope PI policy to grant the `userlist` action. The dev seed in `privacyidea-docker` does not grant it, so non-username attributes silently fall back to the login username — the portal logs `attr=<X> not found on user=<U>; using fallback` and the enrolment still succeeds. In production, add an authentication-scope or user-scope policy with `action=userlist` scoped to the realm if you want to use these attributes.
 
 ---
 
