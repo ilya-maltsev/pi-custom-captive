@@ -4,6 +4,12 @@
 {% block title %}{% trans "Unlock management" %}{% endblock %}
 
 {% block content %}
+{% if login_step %}
+<h2>{% trans "Two-factor authentication" %}</h2>
+<p class="sub">
+    {% blocktrans with u=username %}Enter your TOTP code to sign in as <b>{{ u }}</b>.{% endblocktrans %}
+</p>
+{% else %}
 <h2>{% trans "Unlock management" %}</h2>
 <p class="sub">
     {% blocktrans with u=username %}Enter your TOTP code to elevate this session for <b>{{ u }}</b>.{% endblocktrans %}
@@ -11,6 +17,7 @@
 <p class="sub">
     {% trans "Without elevation you can view tokens but cannot enable, disable, or delete them." %}
 </p>
+{% endif %}
 <form method="post">
     {% csrf_token %}
     <div class="field">
@@ -18,9 +25,19 @@
         <input type="text" id="otp" name="otp" inputmode="numeric" pattern="[0-9]{6}"
                maxlength="6" autocomplete="one-time-code" autofocus required>
     </div>
+    {% if login_step %}
+    <button type="submit" class="btn btn-primary btn-block">{% trans "Sign in" %}</button>
+    {% else %}
     <button type="submit" class="btn btn-primary btn-block">{% trans "Unlock" %}</button>
+    {% endif %}
 </form>
+{% if login_step %}
+<p class="sub" style="margin-top:12px;">
+    <a href="{% url 'admin_login' %}">{% trans "Back to login" %}</a>
+</p>
+{% else %}
 <p class="sub" style="margin-top:12px;">
     <a href="{% url 'admin_home' %}">{% trans "Skip — continue read-only" %}</a>
 </p>
+{% endif %}
 {% endblock %}

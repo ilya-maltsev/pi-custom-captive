@@ -16,7 +16,8 @@
             <p class="sub">{% trans "QR unavailable. Use the manual secret below." %}</p>
         {% endif %}
         <div class="serial" style="margin-top:8px; font-size:12px; color:var(--fi-text-muted);">
-            {% blocktrans with issuer=otpauth_issuer %}account: {{ issuer }}: {{ username }}{% endblocktrans %}
+            {% blocktrans with issuer=otpauth_issuer label=otpauth_label %}account: {{ issuer }}: {{ label }}{% endblocktrans %}
+            {% if serial %}<br>serial: {{ serial }}{% endif %}
         </div>
     </div>
     {% if secret %}

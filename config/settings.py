@@ -55,7 +55,7 @@ WSGI_APPLICATION = 'config.wsgi.application'
 SESSION_ENGINE = 'django.contrib.sessions.backends.signed_cookies'
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Lax'
-SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+SESSION_COOKIE_AGE = 12 * 60 * 60  # 12 hours
 
 from django.utils.translation import gettext_lazy as _
 

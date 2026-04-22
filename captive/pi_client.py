@@ -308,6 +308,45 @@ class PIClient:
         log.info('PI token %sd serial=%s', action, serial)
         return result.get('value', 0)
 
+    def reset_failcount(self, serial):
+        """POST /token/reset — clear the fail counter after successful auth."""
+        self._ensure_auth()
+        resp = self._request(
+            'POST',
+            f'{self.base_url}/token/reset',
+            data={'serial': serial},
+            headers=self._headers(),
+            verify=self.verify_ssl, timeout=15,
+        )
+        data = resp.json()
+        result = data.get('result', {})
+        if not result.get('status'):
+            msg = result.get('error', {}).get('message', 'Failed to reset failcount')
+            raise PIClientError(msg)
+        log.info('PI token failcount reset serial=%s', serial)
+        return result.get('value', 0)
+
+    def assign_token(self, serial, username, realm=None):
+        """POST /token/assign — explicitly assign a token to a user."""
+        self._ensure_auth()
+        data = {'serial': serial, 'user': username}
+        if realm:
+            data['realm'] = realm
+        resp = self._request(
+            'POST',
+            f'{self.base_url}/token/assign',
+            data=data,
+            headers=self._headers(),
+            verify=self.verify_ssl, timeout=15,
+        )
+        body = resp.json()
+        result = body.get('result', {})
+        if not result.get('status'):
+            msg = result.get('error', {}).get('message', 'Failed to assign token')
+            raise PIClientError(msg)
+        log.info('PI token assigned serial=%s user=%s@%s', serial, username, realm)
+        return result.get('value', True)
+
     # --- validation (no JWT required) ----------------------------------------
 
     def validate_check(self, username, password, realm=None):
