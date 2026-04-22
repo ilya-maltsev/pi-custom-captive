@@ -235,7 +235,7 @@ class PIClient:
         self._ensure_auth()
         data = {
             'type': 'totp',
-            'hashlib': 'sha256',
+            'hashlib': 'sha1',
             'otplen': '6',
             'timeStep': '30',
             'description': 'self-enrolled via captive portal',
