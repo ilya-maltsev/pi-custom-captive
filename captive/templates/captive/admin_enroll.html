@@ -1,0 +1,58 @@
+{% extends "captive/_base_admin.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Enroll TOTP" %}{% endblock %}
+
+{% block content %}
+<h1>{% trans "Enroll TOTP" %}</h1>
+<div class="admin-panel">
+    <p class="sub" style="text-align:left;">
+        {% blocktrans with u=username %}You must enroll a TOTP token before you can manage users. Scan the QR code below with your authenticator app (Google Authenticator, 2FAS, etc.), then enter the 6-digit code to confirm.{% endblocktrans %}
+    </p>
+    <div class="qr-box" style="text-align:center; margin:20px 0;">
+        {% if qr_data_uri %}
+            <img src="{{ qr_data_uri }}" alt="QR" style="max-width:220px;">
+        {% else %}
+            <p class="sub">{% trans "QR unavailable. Use the manual secret below." %}</p>
+        {% endif %}
+        <div class="serial" style="margin-top:8px; font-size:12px; color:var(--fi-text-muted);">
+            {% blocktrans with issuer=otpauth_issuer %}account: {{ issuer }}: {{ username }}{% endblocktrans %}
+        </div>
+    </div>
+    {% if secret %}
+    <div style="margin:8px 0 18px;">
+        <label style="font-size:11px; color: var(--fi-text-muted);">{% trans "Or enter this secret manually in your authenticator app" %}</label>
+        <code id="totp-secret" style="display:block; padding:10px 12px; background:#f9fafb; border:1px solid var(--fi-border); border-radius:4px; font-size:14px; letter-spacing:0.08em; word-break:break-all; text-align:center; user-select:all; cursor:copy;"
+              title="{% trans 'Click to copy' %}">{{ secret_pretty|default:secret }}</code>
+        <div style="font-size:11px; color: var(--fi-text-muted); text-align:center; margin-top:4px;">
+            {% trans "algorithm SHA1 · 6 digits · 30-second period" %}
+        </div>
+    </div>
+    <script>
+    (function () {
+      var el = document.getElementById('totp-secret');
+      if (!el) return;
+      el.addEventListener('click', function () {
+        var raw = '{{ secret|escapejs }}';
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(raw);
+        }
+        var prev = el.textContent;
+        el.textContent = '{% trans "copied" %} \u2713';
+        setTimeout(function () { el.textContent = prev; }, 900);
+      });
+    })();
+    </script>
+    {% endif %}
+    <form method="post">
+        {% csrf_token %}
+        <div class="field">
+            <label for="otp">{% trans "6-digit code" %}</label>
+            <input type="text" id="otp" name="otp" inputmode="numeric" pattern="[0-9]{6}"
+                   maxlength="6" autocomplete="one-time-code" autofocus required
+                   style="padding:8px 10px; border:1px solid var(--fi-border); border-radius:4px; width:100%;">
+        </div>
+        <button type="submit" class="btn btn-primary" style="margin-top:12px;">{% trans "Verify and finish" %}</button>
+    </form>
+</div>
+{% endblock %}

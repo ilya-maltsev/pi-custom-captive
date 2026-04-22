@@ -19,6 +19,7 @@ Admin flow:
 """
 import base64
 import io
+import json
 import logging
 import secrets
 
@@ -33,7 +34,9 @@ from django.views.decorators.http import require_POST
 
 from .decorators import admin_required, admin_2fa_required
 from .mtls import mtls_extract
-from .otp_utils import customize_otpauth, extract_secret, pretty_secret, sanitize_for_serial
+from .otp_utils import (customize_otpauth, extract_secret, pretty_secret,
+                        sanitize_for_serial, generate_totp_secret,
+                        secret_to_hex, build_otpauth_uri, verify_totp)
 from .pi_client import PIClient, PIClientError
 
 log = logging.getLogger('captive')
@@ -175,56 +178,44 @@ def user_enroll(request):
     pi = PIClient()
     pi.set_token(user_jwt, username=username)
 
-    # GET: initialize token and show QR.
+    # GET: generate secret locally, show QR. No PI call yet.
     if request.method == 'GET':
-        # Idempotency: reuse existing init in session (refresh-safe).
         enroll_data = request.session.get('enroll_data')
         if not enroll_data:
             try:
-                # Double-check lockout (user could have been enrolled in another tab).
                 if pi.has_active_totp():
                     request.session.flush()
                     request.session['locked_user'] = username
                     return redirect('user_locked')
-                # Assemble serial as {PREFIX}-{SANITIZED(user.<SUFFIX_ATTR>)}-{SHORT_HASH}.
-                # - SUFFIX_ATTR value was resolved at login time and stashed
-                #   in the session (falls back to username if the configured
-                #   attr isn't present on the PI user record).
-                # - SHORT_HASH is 6 random hex chars to disambiguate edge
-                #   cases (sanitisation collisions, re-enrolments) and keep
-                #   audit-log history distinct.
-                # When TOKEN_SERIAL_PREFIX is empty the whole block is
-                # skipped and PI auto-generates its default TOTPXXXXXXXX.
-                serial_override = None
-                if settings.TOKEN_SERIAL_PREFIX:
-                    short_hash = secrets.token_hex(3).upper()
-                    suffix_raw = request.session.get('enroll_serial_suffix') or ''
-                    sanitized = sanitize_for_serial(suffix_raw)
-                    parts = [settings.TOKEN_SERIAL_PREFIX]
-                    if sanitized:
-                        parts.append(sanitized)
-                    parts.append(short_hash)
-                    serial_override = '-'.join(parts)
-                enroll_data = pi.init_totp(serial=serial_override)
             except PIClientError as e:
-                log.error('user_enroll init error user=%s@%s: %s', username, realm, e)
-                messages.error(request, _('Failed to create token. Contact administrator.'))
+                log.error('user_enroll token-list error user=%s@%s: %s',
+                          username, realm, e)
+                messages.error(request, _('Service unavailable. Please try again.'))
                 return redirect('user_login')
 
-            # Rewrite the URI so the authenticator app shows
-            # "<OTPAUTH_ISSUER>: <label>" instead of the PI default
-            # "privacyIDEA: <serial>".
+            secret = generate_totp_secret()
             label = request.session.get('enroll_label') or username
-            enroll_data['otpauth'] = customize_otpauth(
-                enroll_data.get('otpauth', ''),
-                settings.OTPAUTH_ISSUER,
-                label,
-            )
-            enroll_data['secret'] = extract_secret(enroll_data['otpauth'])
+            otpauth = build_otpauth_uri(secret, settings.OTPAUTH_ISSUER, label)
+
+            serial_override = None
+            if settings.TOKEN_SERIAL_PREFIX:
+                short_hash = secrets.token_hex(3).upper()
+                suffix_raw = request.session.get('enroll_serial_suffix') or ''
+                sanitized = sanitize_for_serial(suffix_raw)
+                parts = [settings.TOKEN_SERIAL_PREFIX]
+                if sanitized:
+                    parts.append(sanitized)
+                parts.append(short_hash)
+                serial_override = '-'.join(parts)
+
+            enroll_data = {
+                'secret': secret,
+                'otpauth': otpauth,
+                'serial': serial_override or '',
+            }
             request.session['enroll_data'] = enroll_data
-            log.info('user_enroll init user=%s@%s serial=%s label=%s issuer=%s from=%s',
-                     username, realm, enroll_data.get('serial', '?'),
-                     label, settings.OTPAUTH_ISSUER, ip)
+            log.info('user_enroll secret generated user=%s@%s label=%s issuer=%s from=%s',
+                     username, realm, label, settings.OTPAUTH_ISSUER, ip)
 
         qr = _qr_data_uri(enroll_data.get('otpauth', ''))
         return render(request, 'captive/user_enroll.html', {
@@ -238,26 +229,32 @@ def user_enroll(request):
             'otpauth_label': request.session.get('enroll_label') or username,
         })
 
-    # POST: verify OTP. /validate/check does not require a JWT.
+    # POST: verify OTP locally, then create token in PI.
     otp = request.POST.get('otp', '').strip()
     if not otp.isdigit() or len(otp) != 6:
         messages.error(request, _('Enter the 6-digit code from your authenticator app.'))
         return redirect('user_enroll')
 
-    try:
-        ok = PIClient().validate_check(username, otp, realm=realm)
-    except PIClientError as e:
-        log.warning('user_enroll verify error user=%s@%s: %s', username, realm, e)
-        messages.error(request, _('Verification failed.'))
-        return redirect('user_enroll')
+    enroll_data = request.session.get('enroll_data') or {}
+    secret = enroll_data.get('secret', '')
 
-    if not ok:
+    if not verify_totp(secret, otp):
         log.warning('user_enroll verify denied user=%s@%s from=%s', username, realm, ip)
         messages.error(request, _('Incorrect code. Try again.'))
         return redirect('user_enroll')
 
-    serial = (request.session.get('enroll_data') or {}).get('serial', '?')
-    log.info('user_enroll verified user=%s@%s serial=%s from=%s', username, realm, serial, ip)
+    # OTP verified — now create the token in PI.
+    try:
+        hex_key = secret_to_hex(secret)
+        serial = enroll_data.get('serial') or None
+        result = pi.init_totp(serial=serial, otpkey=hex_key)
+        final_serial = result.get('serial', '?')
+    except PIClientError as e:
+        log.error('user_enroll token create error user=%s@%s: %s', username, realm, e)
+        messages.error(request, _('Failed to create token. Contact administrator.'))
+        return redirect('user_enroll')
+
+    log.info('user_enroll ok user=%s@%s serial=%s from=%s', username, realm, final_serial, ip)
     request.session.flush()
     request.session['done_user'] = username
     return redirect('user_done')
@@ -293,22 +290,33 @@ def admin_login(request):
             messages.error(request, _('Authentication failed.'))
             return render(request, 'captive/admin_login.html')
 
-        # Does the admin have a TOTP token? Drives the "Unlock management" UX
-        # — if they don't, they stay read-only for the whole session.
-        # Query PI on the admin's own JWT: admin role can list tokens by user.
+        # Extract admin realm from JWT for use in enrollment.
+        admin_realm = ''
+        try:
+            payload_b64 = token.split('.')[1]
+            payload_b64 += '=' * (-len(payload_b64) % 4)
+            jwt_payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+            admin_realm = jwt_payload.get('realm', '')
+        except Exception:
+            log.warning('admin_login JWT decode failed user=%s', username)
+
+        # Does the admin have a TOTP token? If not, force enrollment.
         has_totp = False
         try:
             has_totp = pi.has_active_totp(username=username)
         except PIClientError as e:
             log.warning('admin_login token lookup failed user=%s: %s', username, e)
-            # Non-fatal: we just keep has_totp=False so the prompt doesn't show.
 
         request.session['admin_token'] = token
         request.session['admin_username'] = username
+        request.session['admin_realm'] = admin_realm
         request.session['admin_2fa_ok'] = False
         request.session['admin_has_totp'] = has_totp
         log.info('admin_login password ok user=%s from=%s has_totp=%s',
                  username, ip, has_totp)
+
+        if not has_totp:
+            return redirect('admin_enroll')
         return redirect('admin_home')
 
     return render(request, 'captive/admin_login.html')
@@ -344,6 +352,77 @@ def admin_otp(request):
     return render(request, 'captive/admin_otp.html', {'username': username})
 
 
+@admin_required
+def admin_enroll(request):
+    """Force TOTP enrollment for admins who have no token."""
+    username = request.session.get('admin_username')
+    ip = _client_ip(request)
+
+    pi = PIClient()
+    pi.set_token(request.session['admin_token'], username=username)
+
+    # Already has a token — skip straight to home.
+    try:
+        if pi.has_active_totp(username=username):
+            request.session['admin_has_totp'] = True
+            return redirect('admin_home')
+    except PIClientError:
+        pass
+
+    # GET: generate secret locally, show QR. No PI call yet.
+    if request.method == 'GET':
+        enroll_data = request.session.get('admin_enroll_data')
+        if not enroll_data:
+            secret = generate_totp_secret()
+            otpauth = build_otpauth_uri(secret, settings.OTPAUTH_ISSUER, username)
+            enroll_data = {
+                'secret': secret,
+                'otpauth': otpauth,
+            }
+            request.session['admin_enroll_data'] = enroll_data
+            log.info('admin_enroll secret generated user=%s from=%s', username, ip)
+
+        qr = _qr_data_uri(enroll_data.get('otpauth', ''))
+        return render(request, 'captive/admin_enroll.html', {
+            'username': username,
+            'otpauth': enroll_data.get('otpauth', ''),
+            'qr_data_uri': qr,
+            'secret': enroll_data.get('secret', ''),
+            'secret_pretty': pretty_secret(enroll_data.get('secret', '')),
+            'otpauth_issuer': settings.OTPAUTH_ISSUER,
+        })
+
+    # POST: verify OTP locally, then create token in PI.
+    otp = request.POST.get('otp', '').strip()
+    if not otp.isdigit() or len(otp) != 6:
+        messages.error(request, _('Enter the 6-digit code from your authenticator app.'))
+        return redirect('admin_enroll')
+
+    enroll_data = request.session.get('admin_enroll_data') or {}
+    secret = enroll_data.get('secret', '')
+
+    if not verify_totp(secret, otp):
+        log.warning('admin_enroll verify denied user=%s from=%s', username, ip)
+        messages.error(request, _('Incorrect code. Try again.'))
+        return redirect('admin_enroll')
+
+    # OTP verified — now create the token in PI.
+    admin_realm = request.session.get('admin_realm', '') or None
+    try:
+        hex_key = secret_to_hex(secret)
+        result = pi.init_totp(realm=admin_realm, otpkey=hex_key)
+        final_serial = result.get('serial', '?')
+    except PIClientError as e:
+        log.error('admin_enroll token create error user=%s: %s', username, e)
+        messages.error(request, _('Failed to create token. Contact administrator.'))
+        return redirect('admin_enroll')
+
+    log.info('admin_enroll ok user=%s serial=%s from=%s', username, final_serial, ip)
+    request.session.flush()
+    messages.success(request, _('TOTP enrolled successfully. Please log in again with your password and OTP code.'))
+    return redirect('admin_login')
+
+
 def admin_logout(request):
     username = request.session.get('admin_username', '?')
     request.session.flush()
@@ -362,6 +441,8 @@ def _admin_client(request):
 
 @admin_required
 def admin_home(request):
+    if not request.session.get('admin_has_totp'):
+        return redirect('admin_enroll')
     target = request.GET.get('user', '').strip()
     if target:
         return redirect('admin_user_tokens', username=target)

@@ -11,6 +11,7 @@ urlpatterns = [
     # Admin area
     path('admin/login/', views.admin_login, name='admin_login'),
     path('admin/otp/', views.admin_otp, name='admin_otp'),
+    path('admin/enroll/', views.admin_enroll, name='admin_enroll'),
     path('admin/logout/', views.admin_logout, name='admin_logout'),
     path('admin/', views.admin_home, name='admin_home'),
     path('admin/user/<str:username>/', views.admin_user_tokens, name='admin_user_tokens'),

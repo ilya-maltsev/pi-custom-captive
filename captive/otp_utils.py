@@ -1,4 +1,4 @@
-"""Helpers for customising the otpauth:// URI that the authenticator app reads.
+"""Helpers for TOTP generation, verification, and otpauth:// URI handling.
 
 Authenticator apps (Google Authenticator, Authy, 2FAS, …) render the URI as
 ``ISSUER: LABEL`` in the account list. PI returns a URI whose issuer is
@@ -6,7 +6,13 @@ Authenticator apps (Google Authenticator, Authy, 2FAS, …) render the URI as
 which is not useful for end users. We rewrite both to operator-friendly values
 driven by env vars + a per-user PI attribute.
 """
+import base64
+import hashlib
+import hmac
+import os
 import re
+import struct
+import time
 from urllib.parse import urlparse, parse_qs, urlencode, quote
 
 
@@ -63,3 +69,42 @@ def pretty_secret(secret, group=4):
     if not secret:
         return ''
     return ' '.join(secret[i:i + group] for i in range(0, len(secret), group))
+
+
+def generate_totp_secret(length=20):
+    """Generate a random TOTP secret, returned as a base32 string."""
+    return base64.b32encode(os.urandom(length)).decode('ascii')
+
+
+def secret_to_hex(base32_secret):
+    """Convert a base32 secret to hex string for PI's ``otpkey`` parameter."""
+    return base64.b32decode(base32_secret).hex()
+
+
+def build_otpauth_uri(secret, issuer, label, algorithm='SHA1', digits=6, period=30):
+    """Build an ``otpauth://totp/…`` URI from scratch."""
+    return (
+        f'otpauth://totp/{quote(issuer, safe="")}:{quote(label, safe="")}'
+        f'?secret={secret}&issuer={quote(issuer, safe="")}'
+        f'&algorithm={algorithm}&digits={digits}&period={period}'
+    )
+
+
+def verify_totp(secret, otp, algorithm='sha1', digits=6, period=30, window=1):
+    """Verify a TOTP code against a base32 secret locally. Returns True on match."""
+    try:
+        key = base64.b32decode(secret)
+    except Exception:
+        return False
+    hash_func = getattr(hashlib, algorithm, hashlib.sha1)
+    now = int(time.time())
+    for offset in range(-window, window + 1):
+        counter = (now // period) + offset
+        msg = struct.pack('>Q', counter)
+        h = hmac.new(key, msg, hash_func).digest()
+        o = h[-1] & 0x0F
+        code = struct.unpack('>I', h[o:o + 4])[0] & 0x7FFFFFFF
+        code = code % (10 ** digits)
+        if str(code).zfill(digits) == otp:
+            return True
+    return False

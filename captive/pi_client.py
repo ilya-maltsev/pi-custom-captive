@@ -217,7 +217,7 @@ class PIClient:
         tokens = self.list_tokens(username=username, realm=realm, type_='totp', active=True)
         return len(tokens) > 0
 
-    def init_totp(self, username=None, realm=None, serial=None):
+    def init_totp(self, username=None, realm=None, serial=None, otpkey=None):
         """Enroll a new TOTP token.
 
         When called with a user's JWT and no ``username``, PI enrols for the
@@ -225,19 +225,25 @@ class PIClient:
         to target a specific user. Pass ``serial`` to override PI's
         auto-generated serial (the caller is responsible for uniqueness).
 
+        When ``otpkey`` is provided (hex-encoded secret), PI uses it instead
+        of generating a new key. This allows the caller to generate the
+        secret locally, verify OTP before creating the token.
+
         Returns a dict with:
           serial   - token serial
-          otpauth  - otpauth:// URI (for QR encoding)
         """
         self._ensure_auth()
         data = {
             'type': 'totp',
-            'genkey': '1',
-            'hashlib': 'sha256',
+            'hashlib': 'sha1',
             'otplen': '6',
             'timeStep': '30',
             'description': 'self-enrolled via captive portal',
         }
+        if otpkey:
+            data['otpkey'] = otpkey
+        else:
+            data['genkey'] = '1'
         if username:
             data['user'] = username
         if realm:
