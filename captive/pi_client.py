@@ -349,11 +349,27 @@ class PIClient:
 
     # --- validation (no JWT required) ----------------------------------------
 
-    def validate_check(self, username, password, realm=None):
-        """POST /validate/check. Returns True on success."""
-        data = {'user': username, 'pass': password}
+    def validate_check(self, username=None, password='', realm=None,
+                       transaction_id=None):
+        """POST /validate/check — supports challenge-response.
+
+        Step 1 (trigger):  ``validate_check(username, password, realm=…)``
+        Step 2 (answer):   ``validate_check(password=otp, transaction_id=tid)``
+
+        Returns a dict:
+          value          – True if authentication succeeded
+          transaction_id – challenge transaction ID (present when a challenge
+                           was triggered, i.e. password valid but OTP required)
+          message        – human-readable message from PI
+          multi_challenge – list of per-token challenge details
+        """
+        data = {'pass': password}
+        if username:
+            data['user'] = username
         if realm:
             data['realm'] = realm
+        if transaction_id:
+            data['transaction_id'] = transaction_id
         resp = self._request(
             'POST',
             f'{self.base_url}/validate/check',
@@ -368,4 +384,10 @@ class PIClient:
         if not result.get('status'):
             msg = result.get('error', {}).get('message', 'validate/check failed')
             raise PIClientError(msg)
-        return bool(result.get('value'))
+        detail = body.get('detail', {}) or {}
+        return {
+            'value': bool(result.get('value')),
+            'transaction_id': detail.get('transaction_id'),
+            'message': detail.get('message', ''),
+            'multi_challenge': detail.get('multi_challenge', []),
+        }

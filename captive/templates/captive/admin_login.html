@@ -4,6 +4,27 @@
 {% block title %}{% trans "Admin sign in" %}{% endblock %}
 
 {% block content %}
+{% if step == 'otp' %}
+<h2>{% trans "Two-factor authentication" %}</h2>
+<p class="sub">
+    {% blocktrans with u=username %}Enter your TOTP code to sign in as <b>{{ u }}</b>.{% endblocktrans %}
+</p>
+<form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="username" value="{{ username }}">
+    <input type="hidden" name="encrypted_password" value="{{ encrypted_password }}">
+    <input type="hidden" name="transaction_id" value="{{ transaction_id }}">
+    <div class="field">
+        <label for="otp">{% trans "6-digit code" %}</label>
+        <input type="text" id="otp" name="otp" inputmode="numeric" pattern="[0-9]{6}"
+               maxlength="6" autocomplete="one-time-code" autofocus required>
+    </div>
+    <button type="submit" class="btn btn-primary btn-block">{% trans "Sign in" %}</button>
+</form>
+<p class="sub" style="margin-top:12px;">
+    <a href="{% url 'admin_login' %}">{% trans "Back to login" %}</a>
+</p>
+{% else %}
 <h2>{% trans "Admin sign in" %}</h2>
 <p class="sub">{% trans "privacyIDEA admin credentials required. 2FA (TOTP) mandatory." %}</p>
 <form method="post">
@@ -19,4 +40,5 @@
     <button type="submit" class="btn btn-primary btn-block">{% trans "Continue" %}</button>
 </form>
 <p class="sub" style="margin-top:16px;"><a href="{% url 'user_login' %}">{% trans "User self-enrollment" %} &rarr;</a></p>
+{% endif %}
 {% endblock %}
