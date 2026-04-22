@@ -16,11 +16,10 @@ Admin flow (challenge-response, no credentials in session):
                         passOnNoToken: no token -> /admin/enroll
                         Step 2: POST OTP + encrypted password + transaction_id
                             -> /auth with password+OTP -> JWT
-                            -> /admin/ (fully authenticated)
-    /admin/otp          Session step-up only: OTP -> /validate/check
-                            -> /admin/ (mutations unlocked)
+                            -> /admin/ (fully authenticated, 2FA completed)
     /admin/             search user -> /admin/user/<username>/
     /admin/user/<u>/    list TOTP tokens with enable/disable/delete actions
+                        All management actions accessible (2FA done at login).
 """
 import base64
 import io
@@ -38,7 +37,7 @@ from django.utils.translation import gettext as _
 from django.views.decorators.http import require_POST
 
 from .crypto import encrypt, decrypt
-from .decorators import admin_required, admin_2fa_required
+from .decorators import admin_required
 from .mtls import mtls_extract
 from .otp_utils import (customize_otpauth, extract_secret, pretty_secret,
                         sanitize_for_serial, generate_totp_secret,
@@ -290,14 +289,21 @@ def _extract_realm(token):
 def admin_login(request):
     """Admin login — two-step challenge-response, no credentials in session.
 
+    Requires PI policy ``challenge_response: totp`` + ``otppin: userstore``
+    + ``passOnNoToken: true`` in scope *authentication*.
+
     Step 1 (POST username + password):
-        /validate/check with password triggers a challenge and returns a
-        ``transaction_id``.  If passOnNoToken → auth succeeds immediately.
-        Otherwise the page re-renders with an OTP field; the password
-        round-trips through an encrypted hidden form field.
+        POST /validate/check with user + pass + realm.
+        * ``value=true``  → passOnNoToken (no TOTP yet) → /auth → enroll.
+        * ``value=false`` + ``transaction_id`` → challenge triggered
+          (password valid, OTP required) → re-render with OTP field.
+          Password round-trips through an encrypted hidden form field.
+        * ``value=false``, no ``transaction_id`` → wrong password.
 
     Step 2 (POST OTP + encrypted password + transaction_id):
-        /auth with password+OTP → JWT → admin session established.
+        POST /auth with password+OTP → JWT → admin session established.
+        2FA is complete at login; no separate step-up needed.
+
     """
     if request.method == 'POST':
         username = request.POST.get('username', '').strip()
@@ -344,7 +350,6 @@ def admin_login(request):
             request.session['admin_token'] = token
             request.session['admin_username'] = username
             request.session['admin_realm'] = admin_realm
-            request.session['admin_2fa_ok'] = True
             request.session['admin_has_totp'] = True
             log.info('admin_login 2fa ok user=%s from=%s', username, ip)
 
@@ -386,7 +391,6 @@ def admin_login(request):
             request.session['admin_token'] = token
             request.session['admin_username'] = username
             request.session['admin_realm'] = admin_realm
-            request.session['admin_2fa_ok'] = False
             request.session['admin_has_totp'] = has_totp
             log.info('admin_login password ok user=%s from=%s has_totp=%s',
                      username, ip, has_totp)
@@ -430,55 +434,6 @@ def _reset_admin_totp_failcount(pi, username, realm):
     except PIClientError as e:
         log.warning('reset_failcount token list failed user=%s: %s',
                     username, e)
-
-
-def admin_otp(request):
-    """Session step-up — validate OTP for an already-authenticated admin.
-
-    Unlocks mutations (enable / disable / delete tokens).  Login completion
-    is now handled entirely by ``admin_login`` via challenge-response.
-    """
-    username = request.session.get('admin_username')
-    if not username or not request.session.get('admin_token'):
-        return redirect('admin_login')
-
-    if request.method == 'POST':
-        otp = request.POST.get('otp', '').strip()
-        if not otp.isdigit() or len(otp) != 6:
-            messages.error(request, _('Enter the 6-digit code.'))
-            return render(request, 'captive/admin_otp.html', {
-                'username': username,
-            })
-
-        ip = _client_ip(request)
-        try:
-            pi = PIClient()
-            check = pi.validate_check(username, otp)
-        except PIClientError as e:
-            log.warning('admin_otp stepup error user=%s: %s', username, e)
-            messages.error(request, _('Verification failed.'))
-            return render(request, 'captive/admin_otp.html', {
-                'username': username,
-            })
-        if not check['value']:
-            log.warning('admin_otp stepup denied user=%s from=%s',
-                        username, ip)
-            messages.error(request, _('Incorrect code.'))
-            return render(request, 'captive/admin_otp.html', {
-                'username': username,
-            })
-        request.session['admin_2fa_ok'] = True
-        log.info('admin_otp stepup ok user=%s from=%s', username, ip)
-
-        ac = _admin_client(request)
-        _reset_admin_totp_failcount(ac, username,
-                                    request.session.get('admin_realm', ''))
-        return redirect('admin_home')
-
-    return render(request, 'captive/admin_otp.html', {
-        'username': username,
-    })
-
 
 @admin_required
 def admin_enroll(request):
@@ -651,7 +606,7 @@ def admin_user_tokens(request, username):
     })
 
 
-@admin_2fa_required
+@admin_required
 @require_POST
 def admin_token_delete(request, username, serial):
     ip = _client_ip(request)
@@ -666,7 +621,7 @@ def admin_token_delete(request, username, serial):
     return redirect('admin_user_tokens', username=username)
 
 
-@admin_2fa_required
+@admin_required
 @require_POST
 def admin_token_toggle(request, username, serial):
     enable = request.POST.get('action') == 'enable'

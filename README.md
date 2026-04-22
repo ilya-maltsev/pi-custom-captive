@@ -5,7 +5,7 @@ Minimal self-service captive portal for [privacyIDEA](https://www.privacyidea.or
 A narrow proxy to the privacyIDEA REST API with exactly two entry points and a deliberately small privilege surface:
 
 - **User flow** — one-shot TOTP self-enrolment. After enrolling, the user is locked out until an admin removes their token.
-- **Admin flow** — always logs in, but mutations (enable / disable / delete) require a TOTP step-up against the admin's own token.
+- **Admin flow** — two-step challenge-response login (password → OTP). Once authenticated with 2FA, admins have full access to token management (enable / disable / delete). No credentials are stored in the server session between login steps.
 
 The portal has **no database** and **no service account**. Every PI call runs on the actor's own JWT — PI auto-scopes to the JWT caller. Events are emitted as syslog so they can be forwarded to the parent `privacyidea-docker` rsyslog container.
 
@@ -26,11 +26,29 @@ The portal never acts on behalf of a user with higher privileges than the user t
 
 Only these PI endpoints are called:
 
-- `/auth` — password check for both flows; returns the JWT the portal uses for the rest of the session.
-- `/validate/check` — verifies the freshly-enrolled TOTP (user flow) and the admin's TOTP step-up (admin flow). No JWT required.
+- `/auth` — password (+OTP) check for both flows; returns the JWT the portal uses for the rest of the session.
+- `/validate/check` — triggers and answers challenge-response authentication (admin login step 1), verifies the freshly-enrolled TOTP (user flow). No JWT required.
 - `/token/` — list tokens visible to the JWT caller (auto-scoped for users; admin-scoped lookup by `user=` for admins).
 - `/token/init` — enrol a TOTP. When called on a user's JWT it enrols for that user; when called on an admin's JWT it can target any user via `user=`.
-- `/token/<serial>` DELETE, `/token/enable`, `/token/disable` — admin mutations; run on the admin's JWT and gated by the admin TOTP step-up.
+- `/token/<serial>` DELETE, `/token/enable`, `/token/disable` — admin mutations; run on the admin's JWT (obtained after full 2FA at login).
+
+---
+
+## PI policy requirements
+
+The admin challenge-response login requires a privacyIDEA policy with:
+
+| Setting | Value |
+|---------|-------|
+| **Scope** | `authentication` |
+| `challenge_response` | `totp` |
+| `otppin` | `userstore` |
+| `passOnNoToken` | `true` |
+
+This makes PI:
+1. Accept the AD/LDAP password as the PIN (`otppin: userstore`).
+2. Trigger a TOTP challenge when a valid password is sent for a user who has a TOTP token (`challenge_response: totp`).
+3. Let users without tokens authenticate with password alone (`passOnNoToken: true`) — used for first-time admin enrolment.
 
 ---
 
@@ -85,44 +103,54 @@ Only these PI endpoints are called:
 
 Any subsequent `GET /` for the same user repeats the `GET /token/?type=totp&active=true` step; this time `count=1`, so the portal redirects to the **Already enrolled** page. That's the lockout: it stays until an admin deletes the token.
 
-### Admin flow — login, then optional TOTP step-up for mutations
+### Admin flow — challenge-response login (no credentials in session)
 
 ```
 [  Browser  ]                [  captive portal  ]                    [  privacyIDEA  ]
      |                               |                                       |
-     | POST /admin/login/ user,pass  |                                       |
+     |  ─── Step 1: trigger challenge ───                                    |
+     |                               |                                       |
+     | POST /admin/login/            |                                       |
+     |  user, password               |                                       |
      |------------------------------>|                                       |
-     |                               | POST /auth user,password              |
+     |                               | POST /validate/check                  |
+     |                               |  user=<admin>, pass=<password>,       |
+     |                               |  realm=<admin_realm>                  |
+     |                               |-------------------------------------->|
+     |                               |<- 200 {result.value: false,           |
+     |                               |   detail.transaction_id: "036300…",   |
+     |                               |   result.authentication: "CHALLENGE"} |
+     |                               |                                       |
+     |                               | encrypt(password) → hidden field      |
+     |<- 200 OTP form                |  (transaction_id in hidden field)     |
+     |    [username, encrypted_pw,   |                                       |
+     |     transaction_id: hidden]   |                                       |
+     |                               |                                       |
+     |  ─── Step 2: complete auth ───                                        |
+     |                               |                                       |
+     | POST /admin/login/            |                                       |
+     |  username, encrypted_password,|                                       |
+     |  transaction_id, otp          |                                       |
+     |------------------------------>|                                       |
+     |                               | decrypt(encrypted_pw) → password      |
+     |                               | POST /auth                            |
+     |                               |  username=<admin>,                    |
+     |                               |  password=<password><otp>             |
      |                               |-------------------------------------->|
      |                               |<- 200 JWT (role=admin)                |
      |                               |                                       |
-     |                               | GET /token/?user=<admin>&type=totp    |
-     |                               |     &active=true   (auth: admin JWT)  |
-     |                               |-------------------------------------->|
-     |                               |<- 200 {tokens: [<N>]}                 |
-     |                               | session: admin_token, admin_2fa_ok=0, |
-     |                               |          admin_has_totp=<bool>        |
+     |                               | session: admin_token=JWT              |
      |<- 302 /admin/                 |                                       |
      |                               |                                       |
-     | GET /admin/user/<u>/          | ← read-only listing, no mutations yet |
+     |  ─── Full access (2FA done) ──                                        |
+     |                               |                                       |
+     | GET /admin/user/<u>/          |                                       |
      |------------------------------>|                                       |
      |                               | GET /token/?user=<u>&type=totp        |
      |                               |-------------------------------------->|
      |                               |<- 200 {tokens: [...]}                 |
-     |<- 200 token table, actions    |                                       |
-     |       disabled, "Unlock" link |                                       |
-     |                               |                                       |
-     | GET /admin/otp/               |                                       |
-     |------------------------------>|                                       |
-     |<- 200 OTP prompt              |                                       |
-     | POST /admin/otp/ otp=...      |                                       |
-     |------------------------------>|                                       |
-     |                               | POST /validate/check user=<admin>,    |
-     |                               |     pass=<otp>   (no JWT)             |
-     |                               |-------------------------------------->|
-     |                               |<- 200 authentication=ACCEPT           |
-     |                               | session: admin_2fa_ok=1               |
-     |<- 302 /admin/                 |                                       |
+     |<- 200 token table with        |                                       |
+     |       Enable/Disable/Delete   |                                       |
      |                               |                                       |
      | POST /admin/user/<u>/token/<s>/delete/                                |
      |------------------------------>|                                       |
@@ -133,7 +161,12 @@ Any subsequent `GET /` for the same user repeats the `GET /token/?type=totp&acti
      |<- 302 /admin/user/<u>/        |                                       |
 ```
 
-Admins with no TOTP enrolled in PI cannot elevate; the action buttons stay disabled for the whole session and the topbar shows **👁 read-only**. This is deliberate — a compromised admin password alone must not be enough to reset a user's second factor.
+Key differences from the previous design:
+- **No credentials stored in server session.** The password round-trips through a Fernet-encrypted hidden form field between step 1 and step 2.
+- **No step-up required.** 2FA is completed during login — all management actions are immediately available.
+- **Wrong passwords are caught in step 1.** The `/validate/check` response distinguishes wrong password (`value=false`, no `transaction_id`) from OTP-required (`value=false` + `transaction_id`).
+
+Admins with no TOTP enrolled get through via `passOnNoToken` and are immediately redirected to the enrollment page. After enrolling they must re-login — the next login triggers the challenge-response flow.
 
 ### mTLS flow
 
@@ -200,6 +233,20 @@ Admins scanning PI can now group tokens by prefix (`VPN-GATE1-*`) and read off w
 
 ---
 
+## Internationalisation (i18n)
+
+The portal supports Russian and English. The default language is set via `LANGUAGE_CODE` in settings (default `ru`). Users can switch language via the topbar buttons.
+
+Translation files live in `locale/ru/LC_MESSAGES/django.po`. After editing the `.po` file, recompile:
+
+```bash
+msgfmt -o locale/ru/LC_MESSAGES/django.mo locale/ru/LC_MESSAGES/django.po
+```
+
+When running in Docker, rebuild the image so the `.mo` file is baked in.
+
+---
+
 ## Quick start
 
 ```bash
@@ -239,4 +286,4 @@ nginx ≥ 1.19 supports OCSP verification of **client certificates** via `ssl_oc
 - Do not expose gunicorn (`:8000`) directly when `MTLS_ENABLED=true`. Always put nginx in front.
 - The example snippet starts with `proxy_set_header X-SSL-User "";` to clamp an attacker-supplied header before overwriting it with nginx's verified value. Keep that line.
 - Pin trusted issuers in `ssl_client_certificate` — do not use the OS root bundle.
-- The admin flow is never affected by `MTLS_ENABLED`. Admins still log in with password and elevate via the TOTP step-up.
+- The admin flow is never affected by `MTLS_ENABLED`. Admins still log in with password and complete 2FA via challenge-response.
