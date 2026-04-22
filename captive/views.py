@@ -303,6 +303,7 @@ def admin_login(request):
     Step 2 (POST OTP + encrypted password + transaction_id):
         POST /auth with password+OTP → JWT → admin session established.
         2FA is complete at login; no separate step-up needed.
+
     """
     if request.method == 'POST':
         username = request.POST.get('username', '').strip()
@@ -433,7 +434,6 @@ def _reset_admin_totp_failcount(pi, username, realm):
     except PIClientError as e:
         log.warning('reset_failcount token list failed user=%s: %s',
                     username, e)
-
 
 @admin_required
 def admin_enroll(request):
