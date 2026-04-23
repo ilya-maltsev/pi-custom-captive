@@ -16,15 +16,51 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ARCHIVE="${SCRIPT_DIR}/pi-custom-captive-images.tar.gz"
 IMAGES="nginx:1.27-alpine pi-custom-captive-app:latest"
 
+# Whitelist: files/dirs copied into the Docker build context.
+# Add new app dirs here when the project grows; anything outside this list
+# (docs, planning, compose files, .git, etc.) stays out.
+APP_FILES=(
+    requirements.txt
+    manage.py
+    config
+    captive
+    locale
+)
+
+_STAGED_DIRS=()
+_cleanup_staged() {
+    local d
+    for d in "${_STAGED_DIRS[@]}"; do
+        [ -d "${d}" ] && rm -rf "${d}"
+    done
+}
+trap _cleanup_staged EXIT
+
+stage_build_context() {
+    local src="$1"; shift
+    local dir
+    dir="$(mktemp -d -t pi-custom-captive-ctx.XXXXXX)"
+    _STAGED_DIRS+=("${dir}")
+    local item
+    for item in "$@"; do
+        if [ ! -e "${src}/${item}" ]; then
+            echo "ERROR: required file '${item}' not found in ${src}" >&2
+            exit 1
+        fi
+        cp -a "${src}/${item}" "${dir}/"
+    done
+    echo "${dir}"
+}
+
 build_images() {
     echo "=== Pulling nginx:1.27-alpine ==="
     docker pull nginx:1.27-alpine
 
     echo ""
     echo "=== Building pi-custom-captive-app ==="
-    docker build -t pi-custom-captive-app:latest \
-        -f "${SCRIPT_DIR}/Dockerfile" \
-        "${SCRIPT_DIR}/"
+    local ctx
+    ctx="$(stage_build_context "${SCRIPT_DIR}" "${APP_FILES[@]}")"
+    docker build -f "${SCRIPT_DIR}/Dockerfile" -t pi-custom-captive-app:latest "${ctx}"
 
     echo ""
     echo "=== Images built ==="
