@@ -8,6 +8,8 @@ services:
       PI_API_URL: https://host.docker.internal:8443
       PI_VERIFY_SSL: "false"
       PI_REALM: defrealm
+      CAPTIVE_ADMIN_PREFIX: admin
+      DJANGO_LANGUAGE_CODE: en
       DJANGO_SECRET_KEY: dev-secret-key-not-for-production
       DJANGO_DEBUG: "true"
       DJANGO_ALLOWED_HOSTS: "*"

@@ -59,7 +59,7 @@ SESSION_COOKIE_AGE = 12 * 60 * 60  # 12 hours
 
 from django.utils.translation import gettext_lazy as _
 
-LANGUAGE_CODE = 'ru'
+LANGUAGE_CODE = os.environ.get('DJANGO_LANGUAGE_CODE', 'en')
 TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_L10N = True
@@ -82,7 +82,12 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # --- privacyIDEA connection ---------------------------------------------------
 PI_API_URL = os.environ.get('PI_API_URL', 'https://localhost:8443')
 PI_VERIFY_SSL = os.environ.get('PI_VERIFY_SSL', 'false').lower() in ('true', '1', 'yes')
-PI_REALM = os.environ.get('PI_REALM', 'defrealm')
+# Realm the captive portal manages. Historic name ``PI_REALM`` kept as fallback.
+PI_REALM = os.environ.get('CAPTIVE_PI_REALM', os.environ.get('PI_REALM', 'defrealm'))
+
+# URL prefix for admin endpoints (no leading/trailing slashes). Default: admin.
+# Set CAPTIVE_ADMIN_PREFIX=manage to serve admin at /manage/login, /manage/, …
+ADMIN_URL_PREFIX = os.environ.get('CAPTIVE_ADMIN_PREFIX', 'admin').strip('/')
 
 # --- otpauth:// customisation -------------------------------------------------
 # These control what the user's authenticator app (Google Authenticator,

@@ -1,5 +1,10 @@
+from django.conf import settings
 from django.urls import path
+
 from . import views
+
+_ap = settings.ADMIN_URL_PREFIX
+_p = (_ap + '/') if _ap else ''
 
 urlpatterns = [
     # User self-enrollment
@@ -8,14 +13,13 @@ urlpatterns = [
     path('enroll/', views.user_enroll, name='user_enroll'),
     path('done/', views.user_done, name='user_done'),
 
-    # Admin area
-    path('admin/login/', views.admin_login, name='admin_login'),
-    path('admin/enroll/', views.admin_enroll, name='admin_enroll'),
-    path('admin/logout/', views.admin_logout, name='admin_logout'),
-    path('admin/', views.admin_home, name='admin_home'),
-    path('admin/user/<str:username>/', views.admin_user_tokens, name='admin_user_tokens'),
-    path('admin/user/<str:username>/token/<str:serial>/delete/',
+    # Admin area — prefix configurable via CAPTIVE_ADMIN_PREFIX.
+    path(f'{_p}login/', views.admin_login, name='admin_login'),
+    path(f'{_p}enroll/', views.admin_enroll, name='admin_enroll'),
+    path(f'{_p}logout/', views.admin_logout, name='admin_logout'),
+    path(f'{_p}', views.admin_home, name='admin_home'),
+    path(f'{_p}token/<str:serial>/delete/',
          views.admin_token_delete, name='admin_token_delete'),
-    path('admin/user/<str:username>/token/<str:serial>/toggle/',
+    path(f'{_p}token/<str:serial>/toggle/',
          views.admin_token_toggle, name='admin_token_toggle'),
 ]

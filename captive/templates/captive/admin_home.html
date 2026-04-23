@@ -1,19 +1,79 @@
 {% extends "captive/_base_admin.html" %}
-{% load i18n %}
+{% load i18n static %}
 
 {% block title %}{% trans "Manage user tokens" %}{% endblock %}
 
 {% block content %}
-<h1>{% trans "Manage user tokens" %}</h1>
-<div class="admin-panel">
-    <h3>{% trans "Find user" %}</h3>
-    <form method="get" action="{% url 'admin_home' %}" style="display:flex; gap:8px;">
-        <input type="text" name="user" placeholder="{% trans 'username' %}" required
-               style="flex:1; padding:8px 10px; border:1px solid var(--fi-border); border-radius:4px;">
-        <button type="submit" class="btn btn-primary">{% trans "Open" %}</button>
-    </form>
-    <p class="sub" style="text-align:left; margin-top:12px;">
-        {% blocktrans with r=pi_realm %}All lookups target realm <b>{{ r }}</b>.{% endblocktrans %}
-    </p>
+<h1>{% trans "Manage user tokens" %}
+    <span class="mono-sub">{{ total }} {% trans "total" %} @ {{ realm }}</span>
+</h1>
+
+<div class="admin-panel flush">
+    <div class="tbl-wrap">
+    <table class="tbl" data-sortable="1" data-filterable="1">
+        <thead>
+            <tr>
+                <th class="sortable" data-key="username">{% trans "Username" %}<span class="sort-ico">↕</span></th>
+                <th class="sortable" data-key="serial">{% trans "Serial" %}<span class="sort-ico">↕</span></th>
+                <th class="sortable" data-key="description">{% trans "Description" %}<span class="sort-ico">↕</span></th>
+                <th class="sortable" data-key="active">{% trans "Active" %}<span class="sort-ico">↕</span></th>
+                <th class="sortable" data-key="failcount" data-type="num">{% trans "Failcount" %}<span class="sort-ico">↕</span></th>
+                <th style="width:220px;">{% trans "Actions" %}</th>
+            </tr>
+            <tr class="filter-row">
+                <th><input type="text" data-filter-col="0" placeholder="{% trans 'filter…' %}"></th>
+                <th><input type="text" data-filter-col="1" placeholder="{% trans 'filter…' %}"></th>
+                <th><input type="text" data-filter-col="2" placeholder="{% trans 'filter…' %}"></th>
+                <th><input type="text" data-filter-col="3" placeholder="{% trans 'filter…' %}"></th>
+                <th><input type="text" data-filter-col="4" placeholder="{% trans 'filter…' %}"></th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in rows %}
+            <tr data-username="{{ r.username }}"
+                data-serial="{{ r.serial }}"
+                data-description="{{ r.description }}"
+                data-active="{{ r.active|yesno:'1,0' }}"
+                data-failcount="{{ r.failcount }}">
+                <td>{{ r.username|default:"—" }}</td>
+                <td><code>{{ r.serial }}</code></td>
+                <td>{{ r.description|default:"—" }}</td>
+                <td>{% if r.active %}<span style="color:var(--fi-success);">&#10003;</span>{% else %}<span style="color:var(--fi-error);">&#10007;</span>{% endif %}</td>
+                <td>{{ r.failcount }}</td>
+                <td>
+                    {% if r.active %}
+                    <form method="post" class="inline-form"
+                          action="{% url 'admin_token_toggle' r.serial %}">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="disable">
+                        <button class="btn btn-sm btn-warning">{% trans "Disable" %}</button>
+                    </form>
+                    {% else %}
+                    <form method="post" class="inline-form"
+                          action="{% url 'admin_token_toggle' r.serial %}">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="enable">
+                        <button class="btn btn-sm btn-success">{% trans "Enable" %}</button>
+                    </form>
+                    {% endif %}
+                    <form method="post" class="inline-form"
+                          action="{% url 'admin_token_delete' r.serial %}"
+                          onsubmit="return confirm('{% trans "Delete and unassign this token?" %}');">
+                        {% csrf_token %}
+                        <button class="btn btn-sm btn-danger">{% trans "Delete" %}</button>
+                    </form>
+                </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="6" class="tbl-empty">{% trans "No TOTP tokens in this realm." %}</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script defer src="{% static 'captive/table.js' %}"></script>
 {% endblock %}

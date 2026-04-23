@@ -17,9 +17,8 @@ Admin flow (challenge-response, no credentials in session):
                         Step 2: POST OTP + encrypted password + transaction_id
                             -> /auth with password+OTP -> JWT
                             -> /admin/ (fully authenticated, 2FA completed)
-    /admin/             search user -> /admin/user/<username>/
-    /admin/user/<u>/    list TOTP tokens with enable/disable/delete actions
-                        All management actions accessible (2FA done at login).
+    /admin/             realm-wide TOTP token table with filter/sort + per-row
+                        enable/disable/delete actions (2FA done at login).
 """
 import base64
 import io
@@ -581,59 +580,62 @@ def _admin_client(request):
 def admin_home(request):
     if not request.session.get('admin_has_totp'):
         return redirect('admin_enroll')
-    target = request.GET.get('user', '').strip()
-    if target:
-        return redirect('admin_user_tokens', username=target)
-    return render(request, 'captive/admin_home.html', {
-        'page': 'home',
-    })
-
-
-@admin_required
-def admin_user_tokens(request, username):
     realm = settings.PI_REALM
     try:
         ac = _admin_client(request)
-        tokens = ac.list_tokens(username, realm=realm, type_='totp')
+        tokens = ac.list_tokens(realm=realm, type_='totp')
     except PIClientError as e:
         messages.error(request, str(e))
-        return redirect('admin_home')
-    return render(request, 'captive/admin_user_tokens.html', {
+        tokens = []
+    rows = []
+    for t in tokens:
+        # PI returns a ``username`` field on assigned tokens; unassigned tokens
+        # carry an empty string.  Fall back to `user_realm` for display parity
+        # with the old per-user page.
+        rows.append({
+            'username': t.get('username', '') or '',
+            'serial': t.get('serial', ''),
+            'description': t.get('description', '') or '',
+            'active': bool(t.get('active')),
+            'failcount': int(t.get('failcount') or 0),
+        })
+    rows.sort(key=lambda r: (r['username'].lower(), r['serial'].lower()))
+    return render(request, 'captive/admin_home.html', {
         'page': 'home',
-        'target_user': username,
         'realm': realm,
-        'tokens': tokens,
+        'rows': rows,
+        'total': len(rows),
     })
 
 
 @admin_required
 @require_POST
-def admin_token_delete(request, username, serial):
+def admin_token_delete(request, serial):
     ip = _client_ip(request)
     try:
         ac = _admin_client(request)
         ac.delete_token(serial)
-        log.info('admin_token_delete admin=%s target=%s serial=%s from=%s',
-                 request.session.get('admin_username'), username, serial, ip)
+        log.info('admin_token_delete admin=%s serial=%s from=%s',
+                 request.session.get('admin_username'), serial, ip)
         messages.success(request, _('Token %(s)s deleted.') % {'s': serial})
     except PIClientError as e:
         messages.error(request, str(e))
-    return redirect('admin_user_tokens', username=username)
+    return redirect('admin_home')
 
 
 @admin_required
 @require_POST
-def admin_token_toggle(request, username, serial):
+def admin_token_toggle(request, serial):
     enable = request.POST.get('action') == 'enable'
     ip = _client_ip(request)
     try:
         ac = _admin_client(request)
         ac.set_token_active(serial, enable)
-        log.info('admin_token_toggle admin=%s target=%s serial=%s enable=%s from=%s',
-                 request.session.get('admin_username'), username, serial, enable, ip)
+        log.info('admin_token_toggle admin=%s serial=%s enable=%s from=%s',
+                 request.session.get('admin_username'), serial, enable, ip)
         messages.success(request,
                          _('Token %(s)s enabled.') % {'s': serial} if enable
                          else _('Token %(s)s disabled.') % {'s': serial})
     except PIClientError as e:
         messages.error(request, str(e))
-    return redirect('admin_user_tokens', username=username)
+    return redirect('admin_home')
