@@ -71,12 +71,8 @@ msgid "Already enrolled"
 msgstr "Уже зарегистрирован"
 
 #: captive/templates/captive/user_locked.html:9
-msgid ""
-"Your account already has a TOTP token.\n"
-"If you need a new one, contact your administrator to remove the current token first."
-msgstr ""
-"Для вашей учётной записи уже выпущен TOTP-токен.\n"
-"Если необходим новый — обратитесь к администратору для удаления текущего."
+msgid "Your account already has a TOTP token.<br> If you need a new one, contact your administrator to remove the current token first."
+msgstr "Для вашей учётной записи уже выпущен TOTP-токен.<br> Если необходим новый — обратитесь к администратору для удаления текущего."
 
 #: captive/templates/captive/user_locked.html:12
 #: captive/templates/captive/admin_user_tokens.html:10
