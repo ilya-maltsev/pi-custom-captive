@@ -28,7 +28,7 @@ msgstr "Портал — Администрирование"
 
 #: captive/templates/captive/_base_admin.html:14
 msgid "realm"
-msgstr "область"
+msgstr "реалм"
 
 #: captive/templates/captive/_base_admin.html:18
 msgid "Logout"
@@ -125,7 +125,7 @@ msgstr "Нажмите, чтобы скопировать"
 #: captive/templates/captive/user_enroll.html:26
 #: captive/templates/captive/admin_enroll.html:29
 msgid "algorithm SHA1 · 6 digits · 30-second period"
-msgstr "алгоритм SHA1 · 6 цифр �� период 30 секунд"
+msgstr "алгоритм SHA1 · 6 цифр · период 30 секунд"
 
 #: captive/templates/captive/user_enroll.html:39
 #: captive/templates/captive/admin_enroll.html:42
@@ -176,7 +176,7 @@ msgid ""
 "client TLS certificate, but your browser did not present one\n"
 "(or the certificate was rejected by the server)."
 msgstr ""
-"Портал настроен на аутентификацию пользователей по к��иентскому\n"
+"Портал настроен на аутентификацию пользователей по клиентскому\n"
 "TLS-сертификату, но браузер не предоставил сертификат\n"
 "(или сертификат был отклонён сервером)."
 
@@ -254,7 +254,7 @@ msgstr "Открыть"
 #: captive/templates/captive/admin_home.html:16
 #, python-format
 msgid "All lookups target realm <b>%(r)s</b>."
-msgstr "Все запросы выпол��яются в области <b>%(r)s</b>."
+msgstr "Все запросы выполняются в реалме <b>%(r)s</b>."
 
 # ---- admin user tokens ----
 
