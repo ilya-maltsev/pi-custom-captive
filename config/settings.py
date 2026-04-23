@@ -53,10 +53,12 @@ TEMPLATES = [
 WSGI_APPLICATION = 'config.wsgi.application'
 
 # Session stored in signed cookie — no DB required.
+# SESSION_COOKIE_AGE is the upper bound; the actual per-session lifetime is
+# pinned to the PI JWT's `exp` claim at login time (see views._bind_session_to_jwt).
 SESSION_ENGINE = 'django.contrib.sessions.backends.signed_cookies'
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Lax'
-SESSION_COOKIE_AGE = 12 * 60 * 60  # 12 hours
+SESSION_COOKIE_AGE = int(os.environ.get('SESSION_COOKIE_AGE', 12 * 60 * 60))  # default 12h
 
 from django.utils.translation import gettext_lazy as _
 

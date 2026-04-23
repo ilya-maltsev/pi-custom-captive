@@ -24,6 +24,7 @@ import io
 import json
 import logging
 import secrets
+import time
 
 import qrcode
 from django.conf import settings
@@ -273,14 +274,32 @@ def user_done(request):
 # ADMIN FLOW
 # =============================================================================
 
-def _extract_realm(token):
-    """Extract realm from a PI JWT payload.  Returns '' on failure."""
+def _jwt_payload(token):
+    """Decode a JWT's payload. Returns {} on failure."""
     try:
         payload_b64 = token.split('.')[1]
         payload_b64 += '=' * (-len(payload_b64) % 4)
-        return json.loads(base64.urlsafe_b64decode(payload_b64)).get('realm', '')
+        return json.loads(base64.urlsafe_b64decode(payload_b64))
     except Exception:
-        return ''
+        return {}
+
+
+def _extract_realm(token):
+    """Extract realm from a PI JWT payload.  Returns '' on failure."""
+    return _jwt_payload(token).get('realm', '')
+
+
+def _bind_session_to_jwt(request, token):
+    """Pin the Django session cookie to expire when the JWT does.
+
+    PI controls JWT lifetime via its policies, not us — so the cookie
+    should follow the token, not a hard-coded SESSION_COOKIE_AGE.
+    """
+    exp = _jwt_payload(token).get('exp')
+    if exp:
+        remaining = int(exp - time.time())
+        if remaining > 0:
+            request.session.set_expiry(remaining)
 
 
 def admin_login(request):
@@ -344,6 +363,7 @@ def admin_login(request):
             request.session['admin_username'] = username
             request.session['admin_realm'] = admin_realm
             request.session['admin_has_totp'] = True
+            _bind_session_to_jwt(request, token)
             log.info('admin_login 2fa ok user=%s from=%s', username, ip)
 
             _reset_admin_totp_failcount(pi, username, admin_realm)
@@ -386,6 +406,7 @@ def admin_login(request):
         request.session['admin_username'] = username
         request.session['admin_realm'] = admin_realm
         request.session['admin_has_totp'] = False
+        _bind_session_to_jwt(request, token)
         log.info('admin_login password ok user=%s from=%s (passOnNoToken)', username, ip)
         return redirect('admin_enroll')
 
