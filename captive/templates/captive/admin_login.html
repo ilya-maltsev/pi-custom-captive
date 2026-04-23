@@ -12,7 +12,6 @@
 <form method="post">
     {% csrf_token %}
     <input type="hidden" name="username" value="{{ username }}">
-    <input type="hidden" name="encrypted_password" value="{{ encrypted_password }}">
     <input type="hidden" name="transaction_id" value="{{ transaction_id }}">
     <div class="field">
         <label for="otp">{% trans "6-digit code" %}</label>

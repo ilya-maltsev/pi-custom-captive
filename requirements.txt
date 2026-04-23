@@ -3,4 +3,3 @@ whitenoise
 requests
 gunicorn
 qrcode[pil]
-cryptography

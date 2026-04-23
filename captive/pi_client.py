@@ -133,6 +133,73 @@ class PIClient:
         log.info('PI auth success user=%s', username)
         return token
 
+    def auth(self, username=None, password=None, transaction_id=None, realm=None):
+        """POST /auth — supports challenge-response via transaction_id.
+
+        Step 1 (trigger): ``auth(username, password, realm=…)``
+        Step 2 (answer):  ``auth(username, password=otp, transaction_id=tid)``
+
+        Returns one of:
+          {'token': <JWT>}                       — authentication complete
+          {'transaction_id': <tid>, 'message',
+           'multi_challenge'}                    — challenge triggered, OTP required
+        Raises ``PIClientError`` on authentication failure or transport error.
+
+        On success, the returned JWT is also cached on the client so subsequent
+        instance methods (list_tokens, etc.) work without another call.
+        """
+        data = {}
+        if username:
+            data['username'] = username
+        if password is not None:
+            data['password'] = password
+        if transaction_id:
+            data['transaction_id'] = transaction_id
+        if realm:
+            data['realm'] = realm
+        resp = self._request(
+            'POST',
+            f'{self.base_url}/auth',
+            data=data,
+            verify=self.verify_ssl, timeout=15,
+        )
+        try:
+            body = resp.json()
+        except ValueError:
+            raise PIClientError(f'Invalid response from PI (HTTP {resp.status_code})')
+        result = body.get('result', {})
+        if not result.get('status'):
+            msg = result.get('error', {}).get('message', 'Authentication failed')
+            log.warning('PI /auth user=%s tx=%s failed: %s',
+                        username, transaction_id, msg)
+            raise PIClientError(msg)
+        detail = body.get('detail', {}) or {}
+        # Challenge path: status=true, value falsy, transaction_id in detail.
+        if not result.get('value'):
+            tx = detail.get('transaction_id')
+            if tx:
+                log.info('PI /auth challenge triggered user=%s tx=%s', username, tx)
+                return {
+                    'transaction_id': tx,
+                    'message': detail.get('message', ''),
+                    'multi_challenge': detail.get('multi_challenge', []),
+                }
+            raise PIClientError('Authentication failed')
+        # Success path: result.value is the token envelope.
+        value = result.get('value') or {}
+        token = value.get('token') if isinstance(value, dict) else None
+        if not token:
+            raise PIClientError('Authentication failed (no token in response)')
+        self._token = token
+        self._username = username
+        self._password = password if transaction_id is None else None
+        payload_b64 = token.split('.')[1]
+        payload_b64 += '=' * (-len(payload_b64) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        self._token_exp = datetime.fromtimestamp(payload['exp'], tz=timezone.utc)
+        log.info('PI /auth success user=%s', username)
+        return {'token': token}
+
     def _ensure_auth(self):
         if not self._token:
             raise PIClientError('Not authenticated.')

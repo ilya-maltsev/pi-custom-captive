@@ -5,7 +5,7 @@ Minimal self-service captive portal for [privacyIDEA](https://www.privacyidea.or
 A narrow proxy to the privacyIDEA REST API with exactly two entry points and a deliberately small privilege surface:
 
 - **User flow** — one-shot TOTP self-enrolment. After enrolling, the user is locked out until an admin removes their token.
-- **Admin flow** — two-step challenge-response login (password → OTP). Once authenticated with 2FA, admins have full access to token management (enable / disable / delete). No credentials are stored in the server session between login steps.
+- **Admin flow** — two-step challenge-response login (password → OTP) entirely on PI's `/auth` endpoint via `transaction_id`. Once authenticated with 2FA, admins land on a realm-wide TOTP token table (sortable, per-column filterable) with enable / disable / delete actions. No credentials ever leave server memory — the password is **never** persisted in the session or round-tripped to the browser.
 
 The portal has **no database** and **no service account**. Every PI call runs on the actor's own JWT — PI auto-scopes to the JWT caller. Events are emitted as syslog so they can be forwarded to the parent `privacyidea-docker` rsyslog container.
 
@@ -26,11 +26,11 @@ The portal never acts on behalf of a user with higher privileges than the user t
 
 Only these PI endpoints are called:
 
-- `/auth` — password (+OTP) check for both flows; returns the JWT the portal uses for the rest of the session.
-- `/validate/check` — triggers and answers challenge-response authentication (admin login step 1), verifies the freshly-enrolled TOTP (user flow). No JWT required.
-- `/token/` — list tokens visible to the JWT caller (auto-scoped for users; admin-scoped lookup by `user=` for admins).
+- `/auth` — password and OTP check for **both** steps of admin 2FA (step 1 password → challenge, step 2 `transaction_id` + OTP → JWT) and user password authentication. Returns the JWT the portal uses for the rest of the session.
+- `/validate/check` — used only by the user flow to verify the freshly-enrolled TOTP against the just-generated secret. No JWT required.
+- `/token/` — list tokens visible to the JWT caller. The admin home page lists all TOTP tokens in the managed realm via `realm=<CAPTIVE_PI_REALM>&type=totp`.
 - `/token/init` — enrol a TOTP. When called on a user's JWT it enrols for that user; when called on an admin's JWT it can target any user via `user=`.
-- `/token/<serial>` DELETE, `/token/enable`, `/token/disable` — admin mutations; run on the admin's JWT (obtained after full 2FA at login).
+- `/token/<serial>` DELETE, `/token/enable`, `/token/disable`, `/token/reset` — admin mutations; run on the admin's JWT (obtained after full 2FA at login).
 
 ---
 
