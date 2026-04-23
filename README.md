@@ -113,29 +113,27 @@ Any subsequent `GET /` for the same user repeats the `GET /token/?type=totp&acti
      | POST /admin/login/            |                                       |
      |  user, password               |                                       |
      |------------------------------>|                                       |
-     |                               | POST /validate/check                  |
-     |                               |  user=<admin>, pass=<password>,       |
-     |                               |  realm=<admin_realm>                  |
+     |                               | POST /auth                            |
+     |                               |  username=<admin>, password=<pw>      |
      |                               |-------------------------------------->|
-     |                               |<- 200 {result.value: false,           |
-     |                               |   detail.transaction_id: "036300…",   |
-     |                               |   result.authentication: "CHALLENGE"} |
+     |                               |<- 200 {result.status: true,           |
+     |                               |   result.value: false,                |
+     |                               |   detail.transaction_id: "036300…"}   |
      |                               |                                       |
-     |                               | encrypt(password) → hidden field      |
-     |<- 200 OTP form                |  (transaction_id in hidden field)     |
-     |    [username, encrypted_pw,   |                                       |
-     |     transaction_id: hidden]   |                                       |
+     |                               | discard password (GC'd after response)|
+     |<- 200 OTP form                |                                       |
+     |    [username, transaction_id: |                                       |
+     |     hidden]                   |                                       |
      |                               |                                       |
      |  ─── Step 2: complete auth ───                                        |
      |                               |                                       |
      | POST /admin/login/            |                                       |
-     |  username, encrypted_password,|                                       |
-     |  transaction_id, otp          |                                       |
+     |  username, transaction_id, otp|                                       |
      |------------------------------>|                                       |
-     |                               | decrypt(encrypted_pw) → password      |
      |                               | POST /auth                            |
      |                               |  username=<admin>,                    |
-     |                               |  password=<password><otp>             |
+     |                               |  transaction_id=<tid>,                |
+     |                               |  password=<otp>                       |
      |                               |-------------------------------------->|
      |                               |<- 200 JWT (role=admin)                |
      |                               |                                       |
@@ -144,27 +142,29 @@ Any subsequent `GET /` for the same user repeats the `GET /token/?type=totp&acti
      |                               |                                       |
      |  ─── Full access (2FA done) ──                                        |
      |                               |                                       |
-     | GET /admin/user/<u>/          |                                       |
+     | GET /admin/                   |                                       |
      |------------------------------>|                                       |
-     |                               | GET /token/?user=<u>&type=totp        |
+     |                               | GET /token/?realm=<realm>&type=totp   |
      |                               |-------------------------------------->|
      |                               |<- 200 {tokens: [...]}                 |
-     |<- 200 token table with        |                                       |
-     |       Enable/Disable/Delete   |                                       |
+     |<- 200 realm-wide TOTP table   |                                       |
+     |    (sort/filter, per-row      |                                       |
+     |     enable/disable/delete)    |                                       |
      |                               |                                       |
-     | POST /admin/user/<u>/token/<s>/delete/                                |
+     | POST /admin/token/<s>/delete/ |                                       |
      |------------------------------>|                                       |
      |                               | DELETE /token/<serial>                |
      |                               |     (auth: admin JWT)                 |
      |                               |-------------------------------------->|
      |                               |<- 200                                 |
-     |<- 302 /admin/user/<u>/        |                                       |
+     |<- 302 /admin/                 |                                       |
 ```
 
-Key differences from the previous design:
-- **No credentials stored in server session.** The password round-trips through a Fernet-encrypted hidden form field between step 1 and step 2.
+Key properties of this flow:
+- **Password never persisted — anywhere.** The step-1 password is used once for `POST /auth`, then garbage-collected. It is not stored in the session, not encrypted into a cookie, and not re-sent from the browser. Only the `transaction_id` round-trips as a hidden form field.
+- **Both steps hit the same endpoint (`/auth`).** The old implementation mixed `/validate/check` (step 1) with `/auth` (step 2) and needed a helper module to encrypt the password between them; that module (and its symmetric key) have been removed.
 - **No step-up required.** 2FA is completed during login — all management actions are immediately available.
-- **Wrong passwords are caught in step 1.** The `/validate/check` response distinguishes wrong password (`value=false`, no `transaction_id`) from OTP-required (`value=false` + `transaction_id`).
+- **Wrong passwords are caught in step 1.** `POST /auth` raises a `PIClientError` when the password is invalid; a challenge response (`status=true`, `value=false`, `transaction_id` in `detail`) means the password was accepted and OTP is required.
 
 Admins with no TOTP enrolled get through via `passOnNoToken` and are immediately redirected to the enrollment page. After enrolling they must re-login — the next login triggers the challenge-response flow.
 
@@ -186,7 +186,10 @@ See `environment/application-captive.env` for the full list. Key variables:
 | Var | Default | Meaning |
 |-----|---------|---------|
 | `PI_API_URL` | `https://host.docker.internal:8443` | base URL of privacyIDEA REST API |
-| `PI_REALM` | `defrealm` | the **only** realm the portal operates in |
+| `PI_REALM` | `defrealm` | legacy realm variable — used when `CAPTIVE_PI_REALM` is unset |
+| `CAPTIVE_PI_REALM` | *(empty → falls back to `PI_REALM`)* | realm the portal operates in (user enrolment + admin token table) |
+| `CAPTIVE_ADMIN_PREFIX` | `admin` | URL segment for admin endpoints. Set to e.g. `manage` to serve `/manage/`, `/manage/login/`, `/manage/token/<s>/delete/`. No leading/trailing slashes. |
+| `DJANGO_LANGUAGE_CODE` | `en` | default UI language when the visitor has no session/cookie selection and no matching `Accept-Language` header. Must be one of `en`, `ru`. |
 | `PROXY_PORT` | `6443` | external HTTPS port |
 | `OTPAUTH_ISSUER` | `privacyIDEA` | overrides the authenticator app's issuer line (e.g. `VPN-GATE1`) — see below |
 | `OTPAUTH_LABEL_ATTR` | `username` | PI user attribute shown as the account line in the authenticator app |
@@ -235,7 +238,7 @@ Admins scanning PI can now group tokens by prefix (`VPN-GATE1-*`) and read off w
 
 ## Internationalisation (i18n)
 
-The portal supports Russian and English. The default language is set via `LANGUAGE_CODE` in settings (default `ru`). Users can switch language via the topbar buttons.
+The portal supports Russian and English. The default language is set via the `DJANGO_LANGUAGE_CODE` env var (default `en`). Users can switch language via the topbar buttons.
 
 Translation files live in `locale/ru/LC_MESSAGES/django.po`. After editing the `.po` file, recompile:
 
@@ -256,7 +259,7 @@ make cert                          # self-signed TLS for the nginx reverse proxy
 make stack                         # run production compose
 ```
 
-Open `https://localhost:6443/` for the user portal, `https://localhost:6443/admin/login/` for the admin area.
+Open `https://localhost:6443/` for the user portal, `https://localhost:6443/admin/login/` for the admin area (or `/<CAPTIVE_ADMIN_PREFIX>/login/` if you changed the prefix).
 
 For development: `make dev` (runs on `http://localhost:6000`, hot-reload, no TLS).
 
