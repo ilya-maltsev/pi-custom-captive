@@ -1,0 +1,289 @@
+# Russian translations for pi-custom-captive.
+# Copyright (C) 2024
+# This file is distributed under the same license as the pi-custom-captive package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: pi-custom-captive 1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2024-01-01 00:00+0000\n"
+"PO-Revision-Date: 2026-04-22 00:00+0000\n"
+"Last-Translator: \n"
+"Language-Team: Russian\n"
+"Language: ru\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<12 || n%100>14) ? 1 : 2);\n"
+
+#: captive/templates/captive/_base_admin.html
+msgid "Captive Portal — Admin"
+msgstr "Портал — Администрирование"
+
+#: captive/templates/captive/_base_admin.html
+msgid "realm"
+msgstr "область"
+
+#: captive/templates/captive/_base_admin.html
+msgid "Logout"
+msgstr "Выход"
+
+#: captive/templates/captive/admin_login.html
+msgid "Admin sign in"
+msgstr "Вход администратора"
+
+#: captive/templates/captive/admin_login.html
+msgid "Two-factor authentication"
+msgstr "Двухфакторная аутентификация"
+
+#: captive/templates/captive/admin_login.html
+#, python-format
+msgid "Enter your TOTP code to sign in as <b>%(u)s</b>."
+msgstr "Введите TOTP-код для входа как <b>%(u)s</b>."
+
+#: captive/templates/captive/admin_login.html
+msgid "6-digit code"
+msgstr "6-значный код"
+
+#: captive/templates/captive/admin_login.html
+msgid "Sign in"
+msgstr "Вход"
+
+#: captive/templates/captive/admin_login.html
+msgid "Back to login"
+msgstr "Назад к входу"
+
+#: captive/templates/captive/admin_login.html
+msgid "privacyIDEA admin credentials required. 2FA (TOTP) mandatory."
+msgstr "Требуются учётные данные администратора privacyIDEA. 2FA (TOTP) обязательна."
+
+#: captive/templates/captive/admin_login.html
+msgid "Admin username"
+msgstr "Имя администратора"
+
+#: captive/templates/captive/admin_login.html
+msgid "Password"
+msgstr "Пароль"
+
+#: captive/templates/captive/admin_login.html
+msgid "Continue"
+msgstr "Продолжить"
+
+#: captive/templates/captive/admin_login.html
+msgid "User self-enrollment"
+msgstr "Самостоятельная регистрация"
+
+#: captive/templates/captive/admin_home.html
+msgid "Manage user tokens"
+msgstr "Управление токенами пользователей"
+
+#: captive/templates/captive/admin_home.html
+msgid "Find user"
+msgstr "Найти пользователя"
+
+#: captive/templates/captive/admin_home.html
+msgid "Username"
+msgstr "Имя пользователя"
+
+#: captive/templates/captive/admin_home.html
+msgid "Open"
+msgstr "Открыть"
+
+#: captive/templates/captive/admin_home.html
+#, python-format
+msgid "All lookups target realm <b>%(r)s</b>."
+msgstr "Все запросы выполняются в области <b>%(r)s</b>."
+
+#: captive/templates/captive/admin_user_tokens.html
+msgid "Tokens"
+msgstr "Токены"
+
+#: captive/templates/captive/admin_user_tokens.html
+msgid "Tokens of"
+msgstr "Токены пользователя"
+
+#: captive/templates/captive/admin_user_tokens.html
+msgid "Back"
+msgstr "Назад"
+
+#: captive/templates/captive/admin_user_tokens.html
+msgid "TOTP tokens"
+msgstr "TOTP-токены"
+
+#: captive/templates/captive/admin_user_tokens.html
+msgid "Serial"
+msgstr "Серийный номер"
+
+#: captive/templates/captive/admin_user_tokens.html
+msgid "Description"
+msgstr "Описание"
+
+#: captive/templates/captive/admin_user_tokens.html
+msgid "Active"
+msgstr "Активен"
+
+#: captive/templates/captive/admin_user_tokens.html
+msgid "Failcount"
+msgstr "Ошибки"
+
+#: captive/templates/captive/admin_user_tokens.html
+msgid "Actions"
+msgstr "Действия"
+
+#: captive/templates/captive/admin_user_tokens.html
+msgid "Disable"
+msgstr "Отключить"
+
+#: captive/templates/captive/admin_user_tokens.html
+msgid "Enable"
+msgstr "Включить"
+
+#: captive/templates/captive/admin_user_tokens.html
+msgid "Delete"
+msgstr "Удалить"
+
+#: captive/templates/captive/admin_user_tokens.html
+msgid "Delete and unassign this token?"
+msgstr "Удалить и отвязать этот токен?"
+
+#: captive/templates/captive/admin_user_tokens.html
+msgid "No TOTP tokens for this user."
+msgstr "У этого пользователя нет TOTP-токенов."
+
+#: captive/templates/captive/admin_enroll.html
+msgid "Enroll TOTP"
+msgstr "Регистрация TOTP"
+
+#: captive/templates/captive/admin_enroll.html
+#, python-format
+msgid "You must enroll a TOTP token before you can manage users. Scan the QR code below with your authenticator app (Google Authenticator, 2FAS, etc.), then enter the 6-digit code to confirm."
+msgstr "Для управления пользователями необходимо зарегистрировать TOTP-токен. Отсканируйте QR-код ниже в приложении-аутентификаторе (Google Authenticator, 2FAS и т.д.), затем введите 6-значный код для подтверждения."
+
+#: captive/templates/captive/admin_enroll.html
+msgid "QR unavailable. Use the manual secret below."
+msgstr "QR-код недоступен. Используйте секретный ключ ниже."
+
+#: captive/templates/captive/admin_enroll.html
+#, python-format
+msgid "account: %(issuer)s: %(label)s"
+msgstr "аккаунт: %(issuer)s: %(label)s"
+
+#: captive/templates/captive/admin_enroll.html
+msgid "Or enter this secret manually in your authenticator app"
+msgstr "Или введите этот секретный ключ вручную в приложении-аутентификаторе"
+
+#: captive/templates/captive/admin_enroll.html
+msgid "Click to copy"
+msgstr "Нажмите для копирования"
+
+#: captive/templates/captive/admin_enroll.html
+msgid "algorithm SHA1 · 6 digits · 30-second period"
+msgstr "алгоритм SHA1 · 6 цифр · период 30 секунд"
+
+#: captive/templates/captive/admin_enroll.html
+msgid "copied"
+msgstr "скопировано"
+
+#: captive/templates/captive/admin_enroll.html
+msgid "Verify and finish"
+msgstr "Подтвердить и завершить"
+
+#: captive/templates/captive/user_login.html
+msgid "Self-Enrollment"
+msgstr "Самостоятельная регистрация"
+
+#: captive/templates/captive/user_login.html
+msgid "privacyIDEA Self-Enrollment"
+msgstr "Самостоятельная регистрация privacyIDEA"
+
+#: captive/templates/captive/user_login.html
+#, python-format
+msgid "Sign in with your account (%(realm)s) to set up 2FA."
+msgstr "Войдите в свою учётную запись (%(realm)s) для настройки 2FA."
+
+#: captive/templates/captive/user_enroll.html
+msgid "Scan QR and verify"
+msgstr "Отсканируйте QR и подтвердите"
+
+#: captive/templates/captive/user_enroll.html
+msgid "Scan and verify"
+msgstr "Сканируйте и подтвердите"
+
+#: captive/templates/captive/user_locked.html
+msgid "Already enrolled"
+msgstr "Уже зарегистрирован"
+
+#: captive/templates/captive/user_locked.html
+msgid "You will not be able to return to this page until an administrator resets your token."
+msgstr "Вы не сможете вернуться на эту страницу, пока администратор не сбросит ваш токен."
+
+#: captive/templates/captive/user_done.html
+msgid "Enrollment complete"
+msgstr "Регистрация завершена"
+
+#: captive/templates/captive/user_mtls_error.html
+msgid "Client certificate required"
+msgstr "Требуется клиентский сертификат"
+
+#: captive/templates/captive/user_mtls_error.html
+msgid "Check that your certificate is installed, not expired, not revoked, and matches the expected CA. Then reload this page."
+msgstr "Убедитесь, что ваш сертификат установлен, не истёк, не отозван и соответствует ожидаемому CA. Затем перезагрузите страницу."
+
+#: captive/views.py
+msgid "Username and password are required."
+msgstr "Необходимо указать имя пользователя и пароль."
+
+#: captive/views.py
+msgid "Authentication failed."
+msgstr "Ошибка аутентификации."
+
+#: captive/views.py
+msgid "Service unavailable. Please try again."
+msgstr "Сервис недоступен. Пожалуйста, попробуйте снова."
+
+#: captive/views.py
+msgid "Enter the 6-digit code from your authenticator app."
+msgstr "Введите 6-значный код из приложения-аутентификатора."
+
+#: captive/views.py
+msgid "Incorrect code. Try again."
+msgstr "Неверный код. Попробуйте снова."
+
+#: captive/views.py
+msgid "Failed to create token. Contact administrator."
+msgstr "Не удалось создать токен. Свяжитесь с администратором."
+
+#: captive/views.py
+msgid "Enter the 6-digit code."
+msgstr "Введите 6-значный код."
+
+#: captive/views.py
+msgid "Incorrect code."
+msgstr "Неверный код."
+
+#: captive/views.py
+msgid "Session expired. Please start over."
+msgstr "Сессия истекла. Начните заново."
+
+#: captive/views.py
+msgid "TOTP enrolled successfully. Please log in again with your password and OTP code."
+msgstr "TOTP успешно зарегистрирован. Войдите снова, используя пароль и OTP-код."
+
+#: captive/views.py
+#, python-format
+msgid "Token %(s)s deleted."
+msgstr "Токен %(s)s удалён."
+
+#: captive/views.py
+#, python-format
+msgid "Token %(s)s enabled."
+msgstr "Токен %(s)s включён."
+
+#: captive/views.py
+#, python-format
+msgid "Token %(s)s disabled."
+msgstr "Токен %(s)s отключён."
+
+#: captive/views.py
+msgid "mTLS self-enrolment is not available in this build. Please use the password form."
+msgstr "Самостоятельная регистрация через mTLS недоступна в этой сборке. Используйте форму с паролем."

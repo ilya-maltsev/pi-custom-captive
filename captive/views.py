@@ -8,15 +8,15 @@ User flow:
                         POST verifies OTP -> user_done
     /done               confirmation page
 
-Admin flow:
-    /admin/login        POST username + password -> /auth
-                        passOnNoToken: no token -> /admin/enroll
-                        Has token -> /auth fails -> /admin/otp (step 2)
-    /admin/otp          Two modes:
-                        (a) Login completion: password+OTP -> /auth
-                            -> /admin/ (fully authenticated)
-                        (b) Session step-up: OTP -> /validate/check
-                            -> /admin/ (mutations unlocked)
+Admin flow (challenge-response):
+    /admin/login        Step 1: POST username + password -> /validate/check
+                          - passOnNoToken (no token) -> value=true -> /auth
+                            -> redirect to /admin/enroll
+                          - Has token -> value=false + transaction_id (challenge)
+                            -> render OTP form with encrypted password in hidden field
+                        Step 2: POST OTP + encrypted password + transaction_id
+                          -> /validate/check with transaction_id + OTP
+                          -> /auth with password+OTP -> JWT -> /admin/
     /admin/             search user -> /admin/user/<username>/
     /admin/user/<u>/    list TOTP tokens with enable/disable/delete actions
 """
@@ -36,7 +36,7 @@ from django.utils.translation import gettext as _
 from django.views.decorators.http import require_POST
 
 from .crypto import encrypt, decrypt
-from .decorators import admin_required, admin_2fa_required
+from .decorators import admin_required
 from .mtls import mtls_extract
 from .otp_utils import (customize_otpauth, extract_secret, pretty_secret,
                         sanitize_for_serial, generate_totp_secret,
@@ -275,65 +275,153 @@ def user_done(request):
 # ADMIN FLOW
 # =============================================================================
 
-def admin_login(request):
-    """Admin login step 1 — username + password only.
+def _extract_realm(jwt_token):
+    """Extract the ``realm`` claim from a PI JWT, or '' on failure."""
+    try:
+        payload_b64 = jwt_token.split('.')[1]
+        payload_b64 += '=' * (-len(payload_b64) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        return payload.get('realm', '')
+    except Exception:
+        return ''
 
-    PI login_mode=privacyIDEA with passOnNoToken:
-      - Admin has NO token  → /auth succeeds with password alone → enroll
-      - Admin HAS a token   → /auth fails (OTP missing) → redirect to
-        /admin/otp/ for step 2 (creds held in session server-side).
+
+def admin_login(request):
+    """Admin login — 2-step challenge-response on a single URL.
+
+    Step 1 (username + password):
+        POST /validate/check with user + pass + realm.
+        - value=true  (passOnNoToken) → admin has no token → /auth → enroll
+        - value=false + transaction_id → challenge issued → render OTP form
+        - value=false, no transaction_id → wrong password
+
+    Step 2 (OTP, triggered by hidden ``transaction_id`` in POST):
+        POST /validate/check with transaction_id + pass(OTP) to confirm.
+        Then POST /auth with password+OTP to obtain JWT.
     """
-    if request.method == 'POST':
+    if request.method != 'POST':
+        return render(request, 'captive/admin_login.html')
+
+    ip = _client_ip(request)
+    transaction_id = request.POST.get('transaction_id', '').strip()
+
+    # ------------------------------------------------------------------
+    # Step 2: OTP submission (transaction_id present in hidden field)
+    # ------------------------------------------------------------------
+    if transaction_id:
+        otp = request.POST.get('otp', '').strip()
         username = request.POST.get('username', '').strip()
-        password = request.POST.get('password', '')
-        if not username or not password:
-            messages.error(request, _('Username and password are required.'))
+        encrypted_password = request.POST.get('encrypted_password', '')
+
+        if not otp or not otp.isdigit() or len(otp) != 6:
+            messages.error(request, _('Enter the 6-digit code.'))
+            return render(request, 'captive/admin_login.html', {
+                'otp_step': True,
+                'username': username,
+                'transaction_id': transaction_id,
+                'encrypted_password': encrypted_password,
+            })
+
+        try:
+            password = decrypt(encrypted_password)
+        except (ValueError, TypeError):
+            log.warning('admin_login step2 decrypt failed user=%s', username)
+            messages.error(request, _('Session expired. Please start over.'))
             return render(request, 'captive/admin_login.html')
 
-        ip = _client_ip(request)
+        # Confirm challenge with PI
         pi = PIClient()
         try:
-            token = pi.authenticate(username, password)
+            cr = pi.validate_check(transaction_id=transaction_id, password=otp)
         except PIClientError as e:
-            # Auth failed — could be wrong password OR valid password but
-            # OTP required (login_mode=privacyIDEA, admin has a token).
-            # Store creds in session and offer the OTP step; if the
-            # password was truly wrong the second attempt will fail too.
-            log.info('admin_login step1 denied user=%s from=%s: %s '
-                     '(prompting OTP)', username, ip, e)
-            request.session['admin_pending_username'] = username
-            request.session['admin_pending_password'] = encrypt(password)
-            return redirect('admin_otp')
+            log.warning('admin_login step2 validate failed user=%s from=%s: %s',
+                        username, ip, e)
+            messages.error(request, _('Authentication failed.'))
+            return render(request, 'captive/admin_login.html')
 
-        # Auth succeeded with password alone → passOnNoToken, no token
-        # enrolled yet.  Set up session and route to enrollment.
-        admin_realm = ''
-        try:
-            payload_b64 = token.split('.')[1]
-            payload_b64 += '=' * (-len(payload_b64) % 4)
-            jwt_payload = json.loads(base64.urlsafe_b64decode(payload_b64))
-            admin_realm = jwt_payload.get('realm', '')
-        except Exception:
-            log.warning('admin_login JWT decode failed user=%s', username)
+        if not cr['value']:
+            log.warning('admin_login step2 OTP rejected user=%s from=%s',
+                        username, ip)
+            messages.error(request, _('Incorrect code.'))
+            return render(request, 'captive/admin_login.html', {
+                'otp_step': True,
+                'username': username,
+                'transaction_id': transaction_id,
+                'encrypted_password': encrypted_password,
+            })
 
-        has_totp = False
+        # OTP confirmed — get JWT via /auth with password+OTP
         try:
-            has_totp = pi.has_active_totp(username=username)
+            jwt_token = pi.authenticate(username, password + otp)
         except PIClientError as e:
-            log.warning('admin_login token lookup failed user=%s: %s', username, e)
+            log.warning('admin_login step2 /auth failed user=%s from=%s: %s',
+                        username, ip, e)
+            messages.error(request, _('Authentication failed.'))
+            return render(request, 'captive/admin_login.html')
 
-        request.session['admin_token'] = token
+        admin_realm = _extract_realm(jwt_token)
+        request.session['admin_token'] = jwt_token
         request.session['admin_username'] = username
         request.session['admin_realm'] = admin_realm
-        request.session['admin_2fa_ok'] = False
-        request.session['admin_has_totp'] = has_totp
-        log.info('admin_login password ok user=%s from=%s has_totp=%s',
-                 username, ip, has_totp)
+        request.session['admin_has_totp'] = True
+        log.info('admin_login step2 ok user=%s from=%s', username, ip)
 
-        if not has_totp:
-            return redirect('admin_enroll')
+        # Best-effort reset fail counters
+        _reset_admin_totp_failcount(pi, username, admin_realm)
         return redirect('admin_home')
 
+    # ------------------------------------------------------------------
+    # Step 1: username + password submission
+    # ------------------------------------------------------------------
+    username = request.POST.get('username', '').strip()
+    password = request.POST.get('password', '')
+    if not username or not password:
+        messages.error(request, _('Username and password are required.'))
+        return render(request, 'captive/admin_login.html')
+
+    pi = PIClient()
+    try:
+        cr = pi.validate_check(username=username, password=password)
+    except PIClientError as e:
+        log.warning('admin_login step1 validate failed user=%s from=%s: %s',
+                    username, ip, e)
+        messages.error(request, _('Authentication failed.'))
+        return render(request, 'captive/admin_login.html')
+
+    if cr['value']:
+        # passOnNoToken — admin has no token, password alone accepted.
+        # Get JWT via /auth and redirect to enrollment.
+        try:
+            jwt_token = pi.authenticate(username, password)
+        except PIClientError as e:
+            log.warning('admin_login passOnNoToken /auth failed user=%s: %s',
+                        username, e)
+            messages.error(request, _('Authentication failed.'))
+            return render(request, 'captive/admin_login.html')
+
+        admin_realm = _extract_realm(jwt_token)
+        request.session['admin_token'] = jwt_token
+        request.session['admin_username'] = username
+        request.session['admin_realm'] = admin_realm
+        request.session['admin_has_totp'] = False
+        log.info('admin_login passOnNoToken user=%s from=%s -> enroll',
+                 username, ip)
+        return redirect('admin_enroll')
+
+    if cr.get('transaction_id'):
+        # Challenge issued — render OTP form with encrypted password
+        log.info('admin_login challenge issued user=%s from=%s txn=%s',
+                 username, ip, cr['transaction_id'])
+        return render(request, 'captive/admin_login.html', {
+            'otp_step': True,
+            'username': username,
+            'transaction_id': cr['transaction_id'],
+            'encrypted_password': encrypt(password),
+        })
+
+    # value=false, no transaction_id → wrong password
+    log.warning('admin_login step1 wrong password user=%s from=%s', username, ip)
+    messages.error(request, _('Authentication failed.'))
     return render(request, 'captive/admin_login.html')
 
 
@@ -354,114 +442,6 @@ def _reset_admin_totp_failcount(pi, username, realm):
         log.warning('reset_failcount token list failed user=%s: %s',
                     username, e)
 
-
-def admin_otp(request):
-    """TOTP step — serves two distinct flows:
-
-    1. **Login completion** (``admin_pending_*`` in session):
-       Step 1 password-only /auth was rejected because the admin already
-       has a token.  Re-authenticate with password+OTP concatenated.
-
-    2. **Session step-up** (``admin_token`` in session, ``admin_2fa_ok``
-       is False): admin is logged in read-only and wants to unlock
-       mutations.  Verified via /validate/check.
-    """
-    pending_user = request.session.get('admin_pending_username')
-    pending_pass_enc = request.session.get('admin_pending_password')
-    login_step = bool(pending_user and pending_pass_enc)
-    pending_pass = None
-    if login_step:
-        try:
-            pending_pass = decrypt(pending_pass_enc)
-        except (ValueError, TypeError):
-            log.warning('admin_otp decrypt failed user=%s', pending_user)
-            request.session.flush()
-            return redirect('admin_login')
-
-    if login_step:
-        username = pending_user
-    else:
-        username = request.session.get('admin_username')
-        if not username or not request.session.get('admin_token'):
-            return redirect('admin_login')
-
-    if request.method == 'POST':
-        otp = request.POST.get('otp', '').strip()
-        if not otp.isdigit() or len(otp) != 6:
-            messages.error(request, _('Enter the 6-digit code.'))
-            return render(request, 'captive/admin_otp.html', {
-                'username': username, 'login_step': login_step,
-            })
-
-        ip = _client_ip(request)
-
-        if login_step:
-            # Re-authenticate with password+OTP via /auth.
-            pi = PIClient()
-            try:
-                token = pi.authenticate(username, pending_pass + otp)
-            except PIClientError as e:
-                log.warning('admin_otp login denied user=%s from=%s: %s',
-                            username, ip, e)
-                messages.error(request, _('Authentication failed.'))
-                return render(request, 'captive/admin_otp.html', {
-                    'username': username, 'login_step': login_step,
-                })
-
-            # Success — clear pending creds, set up admin session.
-            for key in ('admin_pending_username', 'admin_pending_password'):
-                request.session.pop(key, None)
-
-            admin_realm = ''
-            try:
-                payload_b64 = token.split('.')[1]
-                payload_b64 += '=' * (-len(payload_b64) % 4)
-                jwt_payload = json.loads(base64.urlsafe_b64decode(payload_b64))
-                admin_realm = jwt_payload.get('realm', '')
-            except Exception:
-                log.warning('admin_otp JWT decode failed user=%s', username)
-
-            request.session['admin_token'] = token
-            request.session['admin_username'] = username
-            request.session['admin_realm'] = admin_realm
-            request.session['admin_2fa_ok'] = True
-            request.session['admin_has_totp'] = True
-            log.info('admin_otp login ok user=%s from=%s', username, ip)
-
-            # Reset fail counters on admin's TOTP tokens.
-            _reset_admin_totp_failcount(pi, username, admin_realm)
-            return redirect('admin_home')
-
-        else:
-            # Step-up: validate OTP for an already-authenticated session.
-            try:
-                pi = PIClient()
-                ok = pi.validate_check(username, otp)
-            except PIClientError as e:
-                log.warning('admin_otp stepup error user=%s: %s', username, e)
-                messages.error(request, _('Verification failed.'))
-                return render(request, 'captive/admin_otp.html', {
-                    'username': username, 'login_step': login_step,
-                })
-            if not ok:
-                log.warning('admin_otp stepup denied user=%s from=%s',
-                            username, ip)
-                messages.error(request, _('Incorrect code.'))
-                return render(request, 'captive/admin_otp.html', {
-                    'username': username, 'login_step': login_step,
-                })
-            request.session['admin_2fa_ok'] = True
-            log.info('admin_otp stepup ok user=%s from=%s', username, ip)
-
-            # Reset fail counters on admin's TOTP tokens.
-            ac = _admin_client(request)
-            _reset_admin_totp_failcount(ac, username,
-                                        request.session.get('admin_realm', ''))
-            return redirect('admin_home')
-
-    return render(request, 'captive/admin_otp.html', {
-        'username': username, 'login_step': login_step,
-    })
 
 
 @admin_required
@@ -635,7 +615,7 @@ def admin_user_tokens(request, username):
     })
 
 
-@admin_2fa_required
+@admin_required
 @require_POST
 def admin_token_delete(request, username, serial):
     ip = _client_ip(request)
@@ -650,7 +630,7 @@ def admin_token_delete(request, username, serial):
     return redirect('admin_user_tokens', username=username)
 
 
-@admin_2fa_required
+@admin_required
 @require_POST
 def admin_token_toggle(request, username, serial):
     enable = request.POST.get('action') == 'enable'
