@@ -150,10 +150,10 @@ msgstr "Регистрация завершена"
 #, python-format
 msgid ""
 "Your TOTP token is active for <b>%(u)s</b>.\n"
-"Use the code from your authenticator app together with your password."
+"    You can now close this page."
 msgstr ""
 "TOTP-токен для <b>%(u)s</b> активирован.\n"
-"Используйте код из приложения-аутентификатора вместе с паролем."
+"    Теперь вы можете закрыть эту страницу."
 
 #: captive/templates/captive/user_done.html:13
 msgid "You will not be able to return to this page until an administrator resets your token."

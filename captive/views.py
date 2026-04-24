@@ -150,10 +150,11 @@ def user_login(request):
                 return fallback
             return str(val)
 
-        label = _resolve_attr(label_attr, fallback=username)
+        label = f'{_resolve_attr(label_attr, fallback=username)}@{realm}'
         serial_suffix_raw = _resolve_attr(suffix_attr, fallback=username)
 
         request.session['enroll_user'] = username
+        request.session['enroll_realm'] = realm
         request.session['enroll_token'] = user_jwt
         request.session['enroll_label'] = label
         request.session['enroll_serial_suffix'] = serial_suffix_raw
@@ -197,7 +198,8 @@ def user_enroll(request):
                 return redirect('user_login')
 
             secret = generate_totp_secret()
-            label = request.session.get('enroll_label') or username
+            session_realm = request.session.get('enroll_realm') or realm
+            label = request.session.get('enroll_label') or f'{username}@{session_realm}'
             otpauth = build_otpauth_uri(secret, settings.OTPAUTH_ISSUER, label)
 
             serial_override = None
@@ -229,7 +231,7 @@ def user_enroll(request):
             'secret': enroll_data.get('secret', ''),
             'secret_pretty': pretty_secret(enroll_data.get('secret', '')),
             'otpauth_issuer': settings.OTPAUTH_ISSUER,
-            'otpauth_label': request.session.get('enroll_label') or username,
+            'otpauth_label': request.session.get('enroll_label') or f'{username}@{request.session.get("enroll_realm") or realm}',
         })
 
     # POST: verify OTP locally, then create token in PI.
