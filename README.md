@@ -1,3 +1,5 @@
+🌐 **English** | [Русский](README.ru.md)
+
 # pi-custom-captive
 
 Minimal self-service captive portal for [privacyIDEA](https://www.privacyidea.org/).
