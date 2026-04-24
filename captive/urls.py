@@ -22,4 +22,6 @@ urlpatterns = [
          views.admin_token_delete, name='admin_token_delete'),
     path(f'{_p}token/<str:serial>/toggle/',
          views.admin_token_toggle, name='admin_token_toggle'),
+    path(f'{_p}token/<str:serial>/reset-failcount/',
+         views.admin_token_reset_failcount, name='admin_token_reset_failcount'),
 ]

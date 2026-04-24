@@ -57,6 +57,13 @@
                         <button class="btn btn-sm btn-success">{% trans "Enable" %}</button>
                     </form>
                     {% endif %}
+                    {% if r.failcount %}
+                    <form method="post" class="inline-form"
+                          action="{% url 'admin_token_reset_failcount' r.serial %}">
+                        {% csrf_token %}
+                        <button class="btn btn-sm btn-primary">{% trans "Reset failcount" %}</button>
+                    </form>
+                    {% endif %}
                     <form method="post" class="inline-form"
                           action="{% url 'admin_token_delete' r.serial %}"
                           onsubmit="return confirm('{% trans "Delete and unassign this token?" %}');">

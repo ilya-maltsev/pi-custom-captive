@@ -14,6 +14,8 @@ from django.contrib import messages
 from django.shortcuts import redirect
 from django.utils.translation import gettext as _
 
+from .pi_client import PISessionInvalid
+
 log = logging.getLogger('captive')
 
 
@@ -46,5 +48,12 @@ def admin_required(view_func):
             request.session.flush()
             messages.info(request, _('Your session has expired. Please sign in again.'))
             return redirect('admin_login')
-        return view_func(request, *args, **kwargs)
+        try:
+            return view_func(request, *args, **kwargs)
+        except PISessionInvalid:
+            username = request.session.get('admin_username', '?')
+            log.info('PI rejected admin JWT user=%s — flushing session', username)
+            request.session.flush()
+            messages.info(request, _('Your session is no longer valid. Please sign in again.'))
+            return redirect('admin_login')
     return wrapper

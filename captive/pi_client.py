@@ -67,6 +67,16 @@ class PIClientError(Exception):
     pass
 
 
+class PISessionInvalid(Exception):
+    """PI rejected our JWT (HTTP 401 on an authenticated call).
+
+    Deliberately NOT a subclass of PIClientError so that per-call
+    ``except PIClientError`` handlers in views don't swallow it —
+    the admin_required decorator catches it and redirects to login.
+    """
+    pass
+
+
 class PIClient:
     """Stateless helper that authenticates with PI and calls its REST API."""
 
@@ -93,6 +103,9 @@ class PIClient:
         log.debug('PI HTTP <<< %s %s body=%s',
                   resp.status_code, resp.reason,
                   _redact_json_body(resp.text))
+        if resp.status_code == 401 and self._token:
+            log.info('PI rejected JWT (HTTP 401) on %s %s', method, url)
+            raise PISessionInvalid('PI rejected the session token')
         return resp
 
     def _headers(self):

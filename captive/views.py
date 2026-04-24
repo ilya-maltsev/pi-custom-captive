@@ -635,3 +635,18 @@ def admin_token_toggle(request, serial):
     except PIClientError as e:
         messages.error(request, str(e))
     return redirect('admin_home')
+
+
+@admin_required
+@require_POST
+def admin_token_reset_failcount(request, serial):
+    ip = _client_ip(request)
+    try:
+        ac = _admin_client(request)
+        ac.reset_failcount(serial)
+        log.info('admin_token_reset_failcount admin=%s serial=%s from=%s',
+                 request.session.get('admin_username'), serial, ip)
+        messages.success(request, _('Failcount for token %(s)s reset.') % {'s': serial})
+    except PIClientError as e:
+        messages.error(request, str(e))
+    return redirect('admin_home')
